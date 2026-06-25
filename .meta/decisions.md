@@ -124,3 +124,34 @@ Continue this session through finalizing the Path 1 draft + the Honcho-actual
 comparison. Reassess at that committed boundary: if the window is heavy with
 Honcho-reading, /ttyl + fresh /hello before the Path 2 (Valkey) draft so it loads
 only load-bearing artifacts. Roll straight on if still lean.
+
+## 2026-06-25 — Designs merged to main; deliverables plan set (`roadmap.md`)
+
+Both designs accepted → fast-forward merged `feature/postgres-queue` to `main`.
+Opened `meta/deliverables-planning`; wrote `roadmap.md`. Plan framed as **the
+audition**: Plastic Labs (research-forward, post-growth-spurt, freshly funded)
+hiring someone to mature them to enterprise; the challenge = "fix the real
+problem" (their per-poll `SUM…GROUP BY` won't survive 2 more orders of
+magnitude). We **oversolve as a package**: *this month* = add the maintained
+look-ahead table; *the future* = migrate to Valkey when numbers justify; *how I
+know* = build both + head-to-head + deterministic proofs. Maps onto the 1-page
+writeup (¶1 fix + migration triggers + Honcho PR; rest = Valkey stack).
+
+Key build decisions:
+- **Build both paths, head-to-head** — the comparison IS the evidence + the
+  "second choice" answer. Old "decision gate" demoted from a build-fork to a
+  **deliverable** (migration-trigger table we hand them). Path 2 is **time-gated
+  behind Path 1**, not measurement-gated.
+- **Path 1 first** — complete deliverable always exists if days run out.
+- **Each path = standalone Docker image**; shared load generator.
+- **Canonical numbers on a pinned cloud box** (not laptop — its "mid stats"
+  pollute the head-to-head); within the $20 cap, track spend.
+- **Honcho PR** ("merge this for all of P1's wins") — but against a **fork**, PR
+  to the fork, link from the writeup; never opened unprompted on their real repo.
+- **If days get tight: Path 2 before the PR — "signal before snark"** (scale
+  vision is the role; the "one line I'd change" PR can read as snark, so it earns
+  its slot only after the signal lands).
+- Parked for a thorough talk: **per-tenant isolation model** (Phil:
+  one-DB-per-tenant is overkill) — decides per-tenant-ceiling vs fleet-aggregate
+  throughput, which sets how hard the sharding story must work.
+- Still no implementation code — next session starts at M0 (scaffold).
