@@ -6,14 +6,19 @@ Current work state. Update constantly, delete items when done.
 
 ## Active
 
-- Buffered work-unit queue take-home. On `feature/postgres-queue`.
-  **Path 1 design ACCEPTED** (`designs/postgres-work-unit-queue.md`, Go + pgx).
-  Backend down-select done (Path 1 default, Path 2 to earn, Path 3 cut).
-  **Honcho comparison DONE** (`assessments/honcho-actual-comparison.md`) — we
-  hold up / improve (maintained aggregate vs their per-poll SUM scan). **Next:
-  Path 2 Valkey /draft** — bar narrowed to throughput-ceiling + latency posture
-  (look-ahead win already banked in PG). Reset seam reached: consider /ttyl +
-  fresh /hello before the Path 2 draft. Implementation not started (by choice).
+- **Buffered work-unit queue take-home.** Branch `feature/postgres-queue`.
+  Status: Path 1 (Postgres, Go + pgx) **design accepted**; **Honcho-actual
+  comparison done — we hold up / improve** (maintained aggregate vs their
+  per-poll SUM scan). No implementation code yet (deliberate).
+  - **Next action:** `/draft` Path 2 (Valkey) — same depth as Path 1. Decision
+    bar narrowed by the Honcho comparison: the look-ahead win is already banked
+    in Postgres, so Path 2 must justify on **throughput ceiling + latency
+    posture** only. The load test settles it ("show a PG ceiling Valkey clears").
+  - Then: if Path 2 justified → build it; else build Path 1. Either way the
+    deliverable wants incremental commits, a load generator with numbers, and a
+    1-page writeup (+ distributed-extension stretch).
+  - Key artifacts: `designs/postgres-work-unit-queue.md` (accepted),
+    `assessments/honcho-actual-comparison.md`, `assessments/path2-redis-durability-recovery.md`.
 
 ## To Explore
 
