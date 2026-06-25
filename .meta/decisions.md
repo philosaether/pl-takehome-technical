@@ -94,6 +94,30 @@ Ground-truthed against live honcho source (v3.0.9, pushed today).
   LOCKED; live code uses INSERT…ON CONFLICT (SKIP LOCKED only in reaping). Fix
   before CTO conversation.
 
+## 2026-06-25 — Path 2 draft: engine = Valkey, client = rueidis (two paper OQs closed)
+
+`/draft` of `designs/valkey-work-unit-queue.md` (Streams + ZSET + Lua; sharded
+for the throughput pitch). The two open questions that don't need a build/measure
+loop, resolved:
+- **Engine: Valkey (not Redis 8.4).** *Verified* `XREADGROUP … CLAIM` is
+  Redis-8.4-only — Valkey ≤9.1 has no `CLAIM` option (docs list
+  GROUP/COUNT/BLOCK/NOACK/STREAMS; 9.1 notes add no consumer-group features). It
+  only optimizes *large*-PEL reclaim; our per-unit PEL is small (one worker/unit,
+  bounded batch), so `XAUTOCLAIM` loses ~nothing and we keep Valkey's
+  license/cost/managed-default edge. Closes the assessment's open item #1.
+- **Client: rueidis.** Both clients unfamiliar → pick on auto-pipelining/throughput.
+- Remaining OQs (#1 latency-under-everysec, #2 claim-funnel ceiling, #4
+  group+PEL-vs-head-cursor, #5 shard count, #7 tunables) are all build/measure or
+  prototype-in-build. Draft is paper-complete; gated on the head-to-head load test.
+
+## 2026-06-25 — ACCEPTED: valkey-work-unit-queue design (Path 2)
+
+Blessed via /ship. Both backend designs (Path 1 Postgres, Path 2 Valkey) now
+accepted and coexist: Path 1 is the safe fallback, Path 2 the gated upgrade.
+**Neither is implemented** — the head-to-head load test is the deliberate next
+gate that decides which we build. Implementation NOT started here by choice;
+merging design work to main + planning a deliverables roadmap instead.
+
 ## 2026-06-25 — Session arc: Honcho comparison is the reset seam
 
 Continue this session through finalizing the Path 1 draft + the Honcho-actual
