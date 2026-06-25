@@ -74,6 +74,26 @@ compute is simulated; PG single-writer ceiling binds). Resolves design OQ#8.
 Blessed via /ship. Implementation deferred — next step is the Honcho-actual
 comparison (gated wall-crossing) before any code.
 
+## 2026-06-25 — Honcho-actual comparison: we hold up (we improve)
+
+Ground-truthed against live honcho source (v3.0.9, pushed today).
+`assessments/honcho-actual-comparison.md`. Key findings:
+- Their buffered gate EXISTS (concept not ours) — but implemented as a **per-poll
+  `SUM…GROUP BY` scan**, the exact thing the brief forbids. Our maintained
+  aggregate + first-class `work_units` row is the real, defensible improvement
+  (the take-home is basically "fix this line in our code").
+- We converge on flush (age-cap) and adaptive poll-backoff → validates those
+  choices. We add retry/DLQ (they have none) and provable ordering (per-unit seq
+  under row lock vs their `ORDER BY id`).
+- Honest caveat: their scan is fine at *their* scale; the brief specifies the
+  scale where it isn't. Frame as "one change I'd make," not arrogant rewrite.
+- **Path 2 impact:** the look-ahead win is now banked in PG, so Redis's ZSET is
+  no longer the differentiator. Path 2 must justify on throughput ceiling +
+  latency posture only. Bar = "load test shows a PG ceiling Valkey clears."
+- Doc bug flagged: `meta/honcho-internals.md` Stage 4 says claim uses SKIP
+  LOCKED; live code uses INSERT…ON CONFLICT (SKIP LOCKED only in reaping). Fix
+  before CTO conversation.
+
 ## 2026-06-25 — Session arc: Honcho comparison is the reset seam
 
 Continue this session through finalizing the Path 1 draft + the Honcho-actual

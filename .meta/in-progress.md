@@ -9,10 +9,11 @@ Current work state. Update constantly, delete items when done.
 - Buffered work-unit queue take-home. On `feature/postgres-queue`.
   **Path 1 design ACCEPTED** (`designs/postgres-work-unit-queue.md`, Go + pgx).
   Backend down-select done (Path 1 default, Path 2 to earn, Path 3 cut).
-  **Next: Honcho-actual comparison** (gated wall-crossing) — do we improve or
-  reproduce? Sources: `~/Development/meta/` review docs + github
-  plastic-labs/honcho. Then: give Valkey (Path 2) the same /draft treatment
-  and decide if it's justified. Implementation not started (by choice).
+  **Honcho comparison DONE** (`assessments/honcho-actual-comparison.md`) — we
+  hold up / improve (maintained aggregate vs their per-poll SUM scan). **Next:
+  Path 2 Valkey /draft** — bar narrowed to throughput-ceiling + latency posture
+  (look-ahead win already banked in PG). Reset seam reached: consider /ttyl +
+  fresh /hello before the Path 2 draft. Implementation not started (by choice).
 
 ## To Explore
 
