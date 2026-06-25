@@ -6,12 +6,13 @@ Current work state. Update constantly, delete items when done.
 
 ## Active
 
-- Buffered work-unit queue take-home. On `meta/queue-backend-scoping`.
-  Four assessments written: overview + three path drilldowns
-  (path1 postgres-done-right+migration, path2 redis-durability,
-  path3 custom-wal). **Next: pick the backend** → /draft architecture.
-  Gate if Postgres wins: compare to Honcho's *actual* impl before building
-  (don't hand back their stack minus features).
+- Buffered work-unit queue take-home. On `feature/postgres-queue`.
+  **Path 1 design ACCEPTED** (`designs/postgres-work-unit-queue.md`, Go + pgx).
+  Backend down-select done (Path 1 default, Path 2 to earn, Path 3 cut).
+  **Next: Honcho-actual comparison** (gated wall-crossing) — do we improve or
+  reproduce? Sources: `~/Development/meta/` review docs + github
+  plastic-labs/honcho. Then: give Valkey (Path 2) the same /draft treatment
+  and decide if it's justified. Implementation not started (by choice).
 
 ## To Explore
 
