@@ -2,7 +2,13 @@
 Status: accepted
 Date: 2026-06-25
 Accepted: 2026-06-25
+Amended: 2026-06-26
 Assessment: ../assessments/path1-postgres-done-right-plus-migration.md
+Amendments:
+  - id: A1
+    title: Isolation model (shared queue) + fairness grain
+    date: 2026-06-26
+    status: accepted
 ---
 
 # Postgres Buffered Work-Unit Queue — Desired State
@@ -426,3 +432,54 @@ read-through → `/ship`, then the Honcho-actual comparison.*
 - Real LLM calls (load test simulates downstream work).
 - Comparison against Honcho's *actual* implementation — a gated step *after* a
   couple of draft iterations close the open questions (per the plan).
+
+---
+
+## Amendments
+
+### A1: Isolation model (shared queue) + fairness grain (2026-06-26)
+
+**Status:** accepted
+**Trigger:** Resolving the parked per-tenant isolation question (gated M3b in
+`../roadmap.md`). The graded brief never required per-customer isolation — only
+"failure isolation" in the sharding question (`../inbox/platform-screening-brief.md:175`).
+The "isolated resources per customer" language was Phil's meeting capture
+(`../inbox/pl-takehome-technical.md:10`), which he **corrected**: it meant *one
+instance processes a tenant's unit at a time* (the exclusive claim), not a
+cluster per tenant. See `../decisions.md` 2026-06-26.
+
+**Refined reasoning:**
+- **Isolation = a single shared queue across all tenants.** No deployment-level
+  per-customer isolation. The only "isolation" guarantee is the exclusive
+  claim/lease already in §"Claim" (`FOR UPDATE SKIP LOCKED`) — at-most-one-worker
+  per unit. This *confirms* the existing model; nothing in the schema or claim
+  path changes.
+- **`workspace` is the one consistent seam** — tenant/fairness grain, shard key,
+  and the `wu_key = (workspace, session, peer)` prefix all align (consistent with
+  the "workspace == tenant for thresholds" decision). When sharding (the future
+  direction noted in Out-of-Scope), **shard by `hash(workspace)`, not full
+  `wu_key`** — the full key scatters one workspace's sessions across shards;
+  `workspace` keeps a whole tenant on one shard (clean seam + failure domain).
+- **Fairness is two grains.** The claim `ORDER BY flush_deadline NULLS LAST,
+  wu_key` (§"Claim") is **work-unit age-fairness**: no unit starves, every unit's
+  head-task latency is bounded by its `flush_deadline`. This is the fairness the
+  design *implements and defends*. It is **not per-tenant fairness**: selection is
+  tenant-blind, so a high-volume tenant collects worker-seconds proportional to
+  its volume and degrades a light tenant's latency (never starves it); the
+  `wu_key` tiebreak sorts one tenant's units into a contiguous block, which is
+  *where it breaks* on simultaneous threshold-cross. Per-tenant **config** exists
+  (`tenant_config`: threshold, max_wait); tenant-aware **selection** does not.
+- **The extension is one seam, deliberately not built.** Per-tenant fairness
+  plugs into exactly the claim `ORDER BY` (+ an optional per-tenant in-flight
+  lease cap) → deficit-round-robin / weighted lottery. **Decision: explain +
+  name the knob, do not build WFQ** — the brief asks what fairness *means*, and
+  built-mechanism + named-policy-knob beats a half-built scheduler. Lands as the
+  fairness paragraph in the writeup (M4).
+
+**Unchanged:** Schema, the maintained `pending_cost` aggregate, enqueue, claim
+(query *and* its index `wu_claimable`), drain/ack, reaper, flush policy, the four
+proofs, operability — all stand verbatim. No code or query changes; this records
+*what the existing mechanism does and does not guarantee* for isolation and
+fairness, plus the shard-key choice for the future sharding work.
+
+**Supersedes:** Nothing. Additive.

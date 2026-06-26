@@ -2,9 +2,15 @@
 Status: accepted
 Date: 2026-06-25
 Accepted: 2026-06-25
+Amended: 2026-06-26
 Assessment: ../assessments/path2-redis-durability-recovery.md
 Related: postgres-work-unit-queue.md (accepted Path 1)
 Gated-by: ../assessments/honcho-actual-comparison.md (narrowed the decision bar)
+Amendments:
+  - id: A1
+    title: Isolation model (shared queue) + fairness grain + shard by workspace
+    date: 2026-06-26
+    status: accepted
 ---
 
 # Valkey Buffered Work-Unit Queue — Desired State
@@ -484,3 +490,59 @@ to make that a measured call, not a preference.
 - Rebuilding Path 1 (accepted; the Postgres design stands as the fallback).
 - Real LLM calls (load test simulates downstream work, as in Path 1).
 - Multi-region / cross-shard transactions (sharding is single-region, key-local).
+
+---
+
+## Amendments
+
+### A1: Isolation model (shared queue) + fairness grain + shard by workspace (2026-06-26)
+
+**Status:** accepted
+**Trigger:** Resolving the parked per-tenant isolation question (gated M3b in
+`../roadmap.md`). The graded brief never required per-customer isolation — only
+"failure isolation" in the sharding question
+(`../inbox/platform-screening-brief.md:175`). The "isolated resources per
+customer" language was Phil's meeting capture
+(`../inbox/pl-takehome-technical.md:10`), which he **corrected**: it meant *one
+instance processes a tenant's unit at a time* (the exclusive lease), not a
+cluster per tenant. See `../decisions.md` 2026-06-26. Mirrors A1 on
+`postgres-work-unit-queue.md`.
+
+**Refined reasoning:**
+- **Isolation = a single shared queue across all tenants.** No deployment-level
+  per-customer isolation. The only "isolation" guarantee is the **atomic Lua
+  unit lease** already in I2 / §Claim — at-most-one-worker per unit. Confirms the
+  existing model; no structure changes.
+- **Shard by `hash(workspace)`, not full `wu_key`.** §"The decision this doc must
+  settle" and §Horizontal scaling currently say *shard by `wu_key`*; refine to
+  **`workspace`** — the full key scatters one workspace's sessions across
+  primaries, while `workspace` keeps a whole tenant on one shard (clean seam +
+  failure domain). The shard-local coordination ZSETs (`eligible`,
+  `pending_flush`, `leases`) are unchanged; only the routing key narrows to the
+  `workspace` prefix of `wu_key`. Linearity argument is unaffected (workspaces
+  vastly outnumber shards).
+- **Fairness is two grains.** `Claim` is `ZPOPMIN eligible` (score =
+  `flush_deadline`) → **work-unit age-fairness**: no unit starves, bounded
+  head-task latency. This is the fairness the design *implements and defends*. It
+  is **not per-tenant fairness**: `ZPOPMIN` is tenant-blind, so a high-volume
+  tenant collects worker-seconds proportional to its volume and degrades a light
+  tenant's latency (never starves it); the ZSET score-tie breaks lexicographically
+  by member (`wu:{wu_key}`), sorting one tenant's units into a contiguous block —
+  *where it breaks* on simultaneous threshold-cross. Per-tenant **config** exists
+  (`threshold`, `max_wait` in `wu:{wu_key}`); tenant-aware **selection** does not.
+- **The extension is one seam, deliberately not built.** Per-tenant fairness
+  plugs into the claim Lua (replace the single `ZPOPMIN` with a tenant-weighted
+  pick across per-tenant `eligible` sub-ZSETs, + an optional per-tenant in-flight
+  lease cap) → deficit-round-robin / weighted lottery. **Decision: explain + name
+  the knob, do not build WFQ.** Lands as the fairness paragraph in the writeup
+  (M4).
+
+**Unchanged:** Data model (Streams, ZSETs, Hashes), the Lua enqueue/claim/ack
+scripts, I1–I5, durability posture, `XAUTOCLAIM` reclaim, flush policy, the
+open build/measure questions — all stand. Only the **shard routing key** narrows
+(`wu_key` → `workspace`); everything shard-*local* is identical. No new
+mechanism; this records isolation/fairness guarantees + the shard-key choice.
+
+**Supersedes:** The "shard by `wu_key`" phrasing in §"The decision this doc must
+settle" and §Horizontal scaling, narrowed to "shard by `workspace`." Otherwise
+additive.

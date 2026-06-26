@@ -155,3 +155,51 @@ Key build decisions:
   one-DB-per-tenant is overkill) — decides per-tenant-ceiling vs fleet-aggregate
   throughput, which sets how hard the sharding story must work.
 - Still no implementation code — next session starts at M0 (scaffold).
+
+## 2026-06-26 — RESOLVED: isolation model = shared queue; fairness gap surfaced
+
+Resolved the parked per-tenant isolation question (gated M3b). **The constraint
+was never in the graded brief** — `platform-screening-brief.md` only says
+"failure isolation" (sharding failure domains, `:175`). The "isolated instances
+/ isolated resources per customer" language lived solely in Phil's meeting
+capture (`inbox/pl-takehome-technical.md:10`), and **Phil corrected it**: he
+meant *one honcho instance processes a given tenant's work unit at a time*
+(exclusive claim), **not** a separate cluster per tenant. So:
+
+- **Isolation model: a single shared queue across all tenants.** No
+  deployment-level per-customer isolation. Worker grabs a unit belonging to
+  exactly one tenant and processes it exclusively — that exclusivity is the only
+  "isolation" the note ever meant.
+- **`workspace` is the one consistent seam** — tenant/fairness grain, shard key,
+  and `wu_key = (workspace, session, peer)` prefix all align (consistent with the
+  earlier "workspace == tenant for thresholds" decision).
+- **Shard seam = `hash(workspace)`, NOT full `wu_key`.** Sharding by the full
+  `wu_key` scatters one workspace's sessions across shards; sharding by
+  `workspace` keeps a whole tenant on one shard (clean seam + failure domain).
+  Corrected M3b in `roadmap.md` accordingly. (Separately: worker isolation during
+  processing comes from the **exclusive lease/claim**, not from any hash.)
+
+**Fairness finding (the brief asks "what does fairness mean," `:172`):** our
+accepted designs implement **age-fairness at the work-unit grain** only — claim
+`ORDER BY flush_deadline NULLS LAST, wu_key` (PG `:134`; Valkey eligible-ZSET
+score). That gives *no unit starves* + a defensible burst answer. It does **not**
+implement **per-tenant (workspace) fairness**: tenant-blind selection means a
+flooding/high-volume tenant collects worker-seconds proportional to its volume
+and degrades a light tenant's latency (never starves it). The `wu_key` tiebreak
+sorts one tenant's units into a contiguous block — *that's where it breaks* on
+simultaneous threshold-cross. Per-tenant **config** exists (`tenant_config`:
+threshold, max_wait); tenant-aware **selection** does not.
+
+**Decision: do NOT build WFQ.** The brief says *explain* fairness, not build it.
+Define the two grains, defend the age-fair mechanism (bounded latency, no
+starvation), name the tenant gap + breakage, and show the **one-seam extension**
+(the claim `ORDER BY` / ZSET score + an optional per-tenant in-flight lease cap →
+deficit-round-robin / weighted lottery). Built-mechanism + named-policy-knob is
+the senior answer; a half-built WFQ is worse than a well-defended deferral.
+Captured as an explicit fairness paragraph in M4 (writeup + 30-min prep) and
+amended into both design docs.
+
+**Amended (not superseded)** both accepted designs — A1 on each: records the
+shared-queue isolation model + the two-grain fairness finding; the Valkey A1 also
+narrows the shard key from `wu_key` → `workspace`. Decisions/structure stand;
+additive reasoning + one shard-key narrowing.

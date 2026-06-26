@@ -115,9 +115,11 @@ Mirrors the accepted Valkey design. Depth set by remaining days, not measurement
       `eligible`/`pending_flush`/`leases` ZSETs + Lua enqueue/claim/ack;
       `XAUTOCLAIM` reclaim; `rueidis`. Standalone image. **Head-to-head vs Path 1**
       (throughput + loop-latency p99) on the same cloud box. Proves the latency half.
-- [ ] **M3b (sharded — top stretch):** shard by `wu_key` across 2–4 primaries,
-      shard-local coordination ZSETs; ~linear write scaling vs 1 PG primary.
-      *Doubles as the brief's distributed-extension deliverable — built, not argued.*
+- [ ] **M3b (sharded — top stretch):** shard by **`workspace`** (`hash(workspace)`,
+      *not* full `wu_key` — keeps a whole tenant on one shard: clean seam + failure
+      domain) across 2–4 primaries, shard-local coordination ZSETs; ~linear write
+      scaling vs 1 PG primary. *Doubles as the brief's distributed-extension
+      deliverable — built, not argued.*
 
 ## M4 — Writeup + migration triggers + walkthrough prep (must) · `meta/writeup`
 
@@ -129,6 +131,17 @@ Mirrors the accepted Valkey design. Depth set by remaining days, not measurement
       which metrics to watch (PG write-throughput plateau vs sustainable arrival at
       target scale, loop-latency p99, vacuum/bloat tax) and the values that say
       "switch to Valkey now."
+- [ ] **Fairness paragraph** (brief asks "what does fairness mean in this system,"
+      and we run a *single shared queue across all tenants* — no deployment
+      isolation). Define the two grains: **work-unit age-fairness** (built —
+      `flush_deadline` claim order → no unit starves, bounded head latency) vs
+      **per-tenant (workspace) fairness** (not built — tenant-blind selection lets a
+      high-volume tenant collect worker-seconds proportional to its volume and
+      degrade a light tenant's latency; `wu_key` tiebreak blocks one tenant's units
+      together → *that's where it breaks* on simultaneous threshold-cross). Show the
+      one-seam extension (claim `ORDER BY` / ZSET score + optional per-tenant
+      in-flight lease cap → deficit-round-robin / weighted lottery). Decision:
+      **explain + name the knob, don't build WFQ.**
 - [ ] Rehearse the 30-min screen answers (all in our designs): backend + second
       choice; eligibility cost & enqueue-path aggregate cost; the 3-of-10 crash
       trace; hot/wedged/stranded unit; fairness under simultaneous threshold-cross;
@@ -156,11 +169,15 @@ Mirrors the accepted Valkey design. Depth set by remaining days, not measurement
 
 ## Open / to talk out
 
-- **Per-tenant isolation model** (pinned, discuss thoroughly). Brief says
-  "isolated instances, isolated resources per customer." *Phil: one-DB-per-tenant
-  is overkill.* Resolution shapes whether throughput is per-tenant-ceiling or
-  fleet-aggregate — and therefore how hard the sharding story has to work. Talk
-  before M3b.
+- ~~**Per-tenant isolation model** (pinned, discuss thoroughly).~~ **RESOLVED
+  2026-06-26.** Constraint was never in the graded brief (only "failure
+  isolation," `:175`); the "isolated resources per customer" note was Phil's
+  capture, which he corrected → *one instance processes a tenant's unit at a time*
+  (the exclusive claim), not a cluster per tenant. **Model: a single shared queue
+  across all tenants; `workspace` is the seam** (tenant/fairness grain + shard key
+  `hash(workspace)`). Surfaced a fairness gap (per-tenant fairness not built) →
+  handled as an explicit writeup paragraph (M4), not a build. See `decisions.md`
+  2026-06-26 + the design amendments.
 
 ## Client Questions (kickoff / WhatsApp — accrue here)
 
