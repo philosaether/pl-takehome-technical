@@ -53,16 +53,19 @@ numbers + switch-thresholds (+ the Honcho PR); the rest = the Valkey stack.
 
 ---
 
-## M0 — Scaffold (must) · `feature/scaffold`
+## M0 — Scaffold ✅ DONE (merged to `main` 2026-06-26) · `feature/scaffold`
 
-- [ ] Go module, repo layout, `Makefile`, pinned versions.
-- [ ] **Backend driver interface** — `Enqueue / Claim / Drain / Ack / Reaper` so
-      both backends plug in behind one shared load generator (the apples-to-apples
-      contract).
-- [ ] **Per-path standalone Docker images** + a shared loadgen image; compose for
-      local dev.
-- [ ] Config (volatility-based: thresholds/tunables in config, logic stable).
-- [ ] README skeleton + one-command reproducibility (`make load-test`).
+- [x] Go module, repo layout, `Makefile`, pinned versions.
+- [x] **Backend driver interface** — 8 methods (`Enqueue/Claim/Drain/Ack/Release/
+      Heartbeat/Fail/ReapExpired`) behind one shared worker loop + loadgen (the
+      apples-to-apples contract). `internal/queue` imports no driver.
+- [x] **Per-path standalone images** via build tags (single-driver binaries,
+      default=memory) + compose for local dev. *(Refined from "shared loadgen
+      image" → build-tag single-driver per OQ1.)*
+- [x] Config (volatility-based: `PLQ_*` env tunables, logic stable).
+- [x] README skeleton + `make load-test` wired (harness fills in M2).
+- [x] **Bonus:** full working in-memory backend (correctness oracle) + M0 smoke
+      proofs (in-order drain, gate); reviewed + fixed before merge.
 
 ## M1 — Path 1: Postgres queue (must) · `feature/postgres-queue` (build)
 
