@@ -256,3 +256,18 @@ the draft iteration:
 - **Embedded idempotent `schema.sql`** (`go:embed`, no migration tool); deferred:
   tombstone-TTL reaping + golang-migrate → `enhancements.md`.
 - `pgx/v5` added (bumped the go directive to 1.25 → Dockerfiles follow).
+
+## 2026-06-26 — M1 /review: 2 fixes + 1 deferral
+
+Reviewed `feature/postgres-queue` (the M1 diff). Applied, re-verified vs live
+postgres:16 (8/8 conformance green):
+- **B1 (bug):** `Fail` now only DLQs the **head** task at the cap (`seq = min(seq)`)
+  — DLQ-ing a middle task would punch a hole in the FIFO; matches the oracle's
+  `u.tasks[0].Seq == seq` guard. Added a `FailNonHeadDoesNotDLQ` conformance
+  scenario (the suite had a blind spot — `Fail` isn't reached by the worker loop,
+  only by tests).
+- **I1 (cleanup):** hoisted the Ack `keep` predicate into an `elig` CTE (was
+  inlined 5×) — single source of truth for the keep/re-buffer decision.
+- Deferred: two PG-driver efficiency round-trips (Drain 2→1, Enqueue tenant-cache
+  miss) → roadmap M2, measure-first. Strong before/after talking-point if they pay
+  off post-load-test.

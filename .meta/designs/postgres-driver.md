@@ -2,6 +2,9 @@
 Status: accepted
 Date: 2026-06-26
 Accepted: 2026-06-26
+Implemented: 2026-06-26 (feature/postgres-queue)
+Divergences: composite natural key (ws,sess,peer) instead of hashed wu_key bytea (flagged); added lease_ms column so Ack renews the lease without a contract param; Ack `keep` computed via an `elig` CTE not a LATERAL (Postgres can't reference the UPDATE target from a LATERAL in its own FROM). Behavior matches the oracle (8/8 conformance vs live postgres:16).
+Deferred: Drain 2→1 round-trip + Enqueue tenant-cache-miss → roadmap M2 (measure first); tombstone-TTL reaping + golang-migrate → enhancements.md.
 Implements: postgres-work-unit-queue.md (accepted Path 1 + A1), against the M0 queue.Backend contract
 Roadmap: ../roadmap.md (M1)
 ---

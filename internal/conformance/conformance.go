@@ -34,6 +34,7 @@ func Run(t *testing.T, newBackend Factory) {
 	t.Run("FlushIsPerHead", func(t *testing.T) { flushIsPerHead(t, newBackend) })
 	t.Run("LeaseReclaimRedelivers", func(t *testing.T) { leaseReclaimRedelivers(t, newBackend) })
 	t.Run("PoisonToDLQ", func(t *testing.T) { poisonToDLQ(t, newBackend) })
+	t.Run("FailNonHeadDoesNotDLQ", func(t *testing.T) { failNonHeadDoesNotDLQ(t, newBackend) })
 }
 
 var key = queue.WorkUnitKey{Workspace: "ws", Session: "s", Peer: "p"}
@@ -254,6 +255,31 @@ func poisonToDLQ(t *testing.T, newBackend Factory) {
 	ok(t, err, "drain after dlq")
 	if len(tasks) != 1 || tasks[0].Seq != 1 {
 		t.Fatalf("expected only seq 1 to remain, got %v", seqs(tasks))
+	}
+}
+
+// failNonHeadDoesNotDLQ: only the head may be DLQ'd at the cap. Failing a
+// non-head task even past max_attempts must not remove it (that would punch a
+// hole in the FIFO) — it just releases for redelivery.
+func failNonHeadDoesNotDLQ(t *testing.T, newBackend Factory) {
+	be := newBackend(Config{Threshold: 1, MaxWait: time.Hour, MaxAttempts: 2})
+	defer be.Close()
+	enqueueN(t, be, 2, 1) // seq 0 (head), 1 (non-head)
+
+	for attempt := 1; attempt <= 3; attempt++ { // past MaxAttempts=2
+		c, err := be.Claim(ctx, "w", time.Minute)
+		ok(t, err, "claim")
+		if c == nil {
+			t.Fatalf("attempt %d: expected a claim", attempt)
+		}
+		ok(t, be.Fail(ctx, c, 1, "boom"), "fail non-head") // fail seq 1, not the head
+	}
+	c, err := be.Claim(ctx, "w", time.Minute)
+	ok(t, err, "claim")
+	tasks, err := be.Drain(ctx, c, 10)
+	ok(t, err, "drain")
+	if len(tasks) != 2 || tasks[0].Seq != 0 || tasks[1].Seq != 1 {
+		t.Fatalf("non-head fail must not DLQ; expected [0 1], got %v", seqs(tasks))
 	}
 }
 

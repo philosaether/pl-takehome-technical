@@ -96,6 +96,18 @@ The this-month answer *and* the baseline. Mirrors the accepted PG design.
       4. look-ahead cost (~flat vs task count at 10⁶/10⁴–10⁵; `EXPLAIN`; contrast
          a naive `SUM…GROUP BY` baseline — *their current code, measured*)
 
+- [ ] **Post-test optimization candidates (deferred from M1 review — measure first).**
+      Two correct-but-extra round-trips in the PG driver; only worth resolving if the
+      load test shows they compound under contention. If they do, the before/after
+      numbers are a strong **talking-point** (see `talking-points.md`).
+      Deferred from: pl-takehome-technical/feature/postgres-queue (2026-06-26).
+      Blocker: M2 load-test numbers (don't optimize blind).
+  - **Drain: collapse 2 round-trips → 1** (lease-check SELECT + task fetch) via an
+    `EXISTS`/`FOR UPDATE` subquery.
+  - **Enqueue: kill the tenant-cache-miss round-trip** on first enqueue per
+    workspace — pre-warm `tenant_config` at startup, or lazy-load on `Claim`
+    instead of the enqueue hot path.
+
 ## M-PR — The Honcho PR (high-value stretch) · against a **fork** of `plastic-labs/honcho`
 
 "Merge this to get all of P1's wins" — the this-month fix against their real

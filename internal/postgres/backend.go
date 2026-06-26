@@ -178,34 +178,37 @@ func (b *Backend) Ack(ctx context.Context, c *queue.ClaimedUnit, throughSeq int6
 	// REMAINING tasks (seq > throughSeq) so it doesn't depend on the data-modifying
 	// CTE's visibility. `keep` (computed once via LATERAL) is the recomputed
 	// eligibility — per-head flush, never a sticky flag.
-	// `keep` (= the recomputed eligibility) is inlined: the UPDATE target `w` can't
-	// be referenced from a LATERAL in its own FROM, so we compute it in the SET
-	// expressions and RETURN the new `eligible` as still_held.
+	// `elig` computes the recomputed eligibility (= the keep/re-buffer decision) ONCE
+	// from the pre-ack row + the acked sum + the new head, so the four downstream
+	// uses (eligible, claimed_by, lease_token, lease_expires) share one source of
+	// truth. Per-head flush, never a sticky flag. `head` filters seq > throughSeq so
+	// it's independent of the data-modifying `del` CTE.
 	var stillHeld bool
 	err = tx.QueryRow(ctx, `
 WITH del AS (
   DELETE FROM tasks WHERE ws=$1 AND sess=$2 AND peer=$3 AND seq <= $6 RETURNING cost
 ), acked AS ( SELECT COALESCE(sum(cost),0) AS c FROM del ),
    head  AS ( SELECT min(enqueued_at) AS min_enq FROM tasks
-              WHERE ws=$1 AND sess=$2 AND peer=$3 AND seq > $6 )
+              WHERE ws=$1 AND sess=$2 AND peer=$3 AND seq > $6 ),
+   elig  AS (
+     SELECT acked.c AS acked, head.min_enq AS min_enq,
+            ((w.pending_cost - acked.c) >= w.threshold
+             OR (head.min_enq IS NOT NULL
+                 AND head.min_enq + w.max_wait_ms * interval '1 ms' <= now())) AS keep
+     FROM work_units w, acked, head
+     WHERE w.ws=$1 AND w.sess=$2 AND w.peer=$3
+   )
 UPDATE work_units w SET
-  pending_cost      = w.pending_cost - acked.c,
-  oldest_pending_at = head.min_enq,
-  flush_deadline    = head.min_enq + w.max_wait_ms * interval '1 ms',
-  eligible          = ((w.pending_cost - acked.c) >= w.threshold
-                       OR (head.min_enq IS NOT NULL AND head.min_enq + w.max_wait_ms * interval '1 ms' <= now())),
-  claimed_by    = CASE WHEN ((w.pending_cost - acked.c) >= w.threshold
-                       OR (head.min_enq IS NOT NULL AND head.min_enq + w.max_wait_ms * interval '1 ms' <= now()))
-                  THEN $4 ELSE NULL END,
-  lease_token   = CASE WHEN ((w.pending_cost - acked.c) >= w.threshold
-                       OR (head.min_enq IS NOT NULL AND head.min_enq + w.max_wait_ms * interval '1 ms' <= now()))
-                  THEN $5::uuid ELSE NULL END,
-  lease_expires = CASE WHEN ((w.pending_cost - acked.c) >= w.threshold
-                       OR (head.min_enq IS NOT NULL AND head.min_enq + w.max_wait_ms * interval '1 ms' <= now()))
-                  THEN now() + w.lease_ms * interval '1 ms' ELSE NULL END
-FROM acked, head
+  pending_cost      = w.pending_cost - elig.acked,
+  oldest_pending_at = elig.min_enq,
+  flush_deadline    = elig.min_enq + w.max_wait_ms * interval '1 ms',
+  eligible          = elig.keep,
+  claimed_by    = CASE WHEN elig.keep THEN $4       ELSE NULL END,
+  lease_token   = CASE WHEN elig.keep THEN $5::uuid ELSE NULL END,
+  lease_expires = CASE WHEN elig.keep THEN now() + w.lease_ms * interval '1 ms' ELSE NULL END
+FROM elig
 WHERE w.ws=$1 AND w.sess=$2 AND w.peer=$3
-RETURNING eligible`,
+RETURNING elig.keep`,
 		c.Key.Workspace, c.Key.Session, c.Key.Peer, string(c.Worker), string(c.Lease), throughSeq).Scan(&stillHeld)
 	if err != nil {
 		return false, err
@@ -261,7 +264,19 @@ RETURNING attempts, cost`,
 		return err
 	}
 
+	// Only the HEAD task can be DLQ'd at the cap — DLQ-ing a middle task would punch
+	// a hole in the FIFO. Matches the oracle's `u.tasks[0].Seq == seq` guard.
+	atCap := false
 	if !errors.Is(err, pgx.ErrNoRows) && attempts >= b.maxTries {
+		var headSeq int64
+		if e := tx.QueryRow(ctx, `SELECT min(seq) FROM tasks WHERE ws=$1 AND sess=$2 AND peer=$3`,
+			c.Key.Workspace, c.Key.Session, c.Key.Peer).Scan(&headSeq); e != nil {
+			return e
+		}
+		atCap = seq == headSeq
+	}
+
+	if atCap {
 		// poison head → DLQ, decrement aggregate, recompute eligibility, release.
 		if _, err := tx.Exec(ctx, `
 WITH moved AS (
