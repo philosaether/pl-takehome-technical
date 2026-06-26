@@ -27,6 +27,7 @@ type unit struct {
 	eligible      bool
 	claimedBy     queue.WorkerID
 	lease         queue.LeaseToken
+	leaseDur      time.Duration // lease window from the current claim (for ack-renew)
 	leaseExpires  time.Time
 	attempts      int // consecutive failures of the current head task
 }
@@ -117,6 +118,7 @@ func (b *Backend) Claim(_ context.Context, worker queue.WorkerID, lease time.Dur
 	tok := queue.LeaseToken(fmt.Sprintf("%s-%d", worker, b.leaseCounter))
 	best.claimedBy = worker
 	best.lease = tok
+	best.leaseDur = lease
 	best.leaseExpires = time.Now().Add(lease)
 	return &queue.ClaimedUnit{Key: best.key, Worker: worker, Lease: tok, LeaseTill: best.leaseExpires}, nil
 }
@@ -166,17 +168,25 @@ func (b *Backend) Ack(_ context.Context, c *queue.ClaimedUnit, throughSeq int64)
 		delete(b.units, u.key) // tombstone (oracle drops it; revived key starts fresh)
 		return false, nil
 	}
-	u.oldestPending = u.enqAt[0]
-	u.flushDeadline = u.oldestPending.Add(u.maxWait)
-	if u.pendingCost >= u.threshold || u.flushed {
-		u.eligible = true
-		return true, nil // keep the claim — more eligible work in this unit
+	b.recompute(u)
+	if u.eligible {
+		// Keep the claim — and renew the lease, so a unit whose batches each finish
+		// faster than the heartbeat interval can't have its lease expire mid-drain.
+		u.leaseExpires = time.Now().Add(u.leaseDur)
+		return true, nil
 	}
 	// dropped below T and not flushed → re-buffer (release).
-	u.eligible = false
 	u.claimedBy = ""
 	u.lease = ""
 	return false, nil
+}
+
+// recompute refreshes a unit's head-derived metadata after the task list is
+// mutated from the front. Assumes len(u.tasks) > 0.
+func (b *Backend) recompute(u *unit) {
+	u.oldestPending = u.enqAt[0]
+	u.flushDeadline = u.oldestPending.Add(u.maxWait)
+	u.eligible = u.pendingCost >= u.threshold || u.flushed
 }
 
 func (b *Backend) Release(_ context.Context, c *queue.ClaimedUnit) error {
@@ -221,9 +231,7 @@ func (b *Backend) Fail(_ context.Context, c *queue.ClaimedUnit, seq int64, reaso
 			delete(b.units, u.key)
 			return nil
 		}
-		u.oldestPending = u.enqAt[0]
-		u.flushDeadline = u.oldestPending.Add(u.maxWait)
-		u.eligible = u.pendingCost >= u.threshold || u.flushed
+		b.recompute(u)
 	}
 	// Release so the unit can be retried/redelivered in order.
 	u.claimedBy = ""

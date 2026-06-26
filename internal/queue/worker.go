@@ -76,11 +76,14 @@ func (w *Worker) Run(ctx context.Context) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		did, _ := w.runOnce(ctx) // transient errors: drop the unit, keep looping
-		if did {
+		did, err := w.runOnce(ctx)
+		if did && err == nil {
 			idle = 0
 			continue
 		}
+		// Nothing claimed, or a backend error — back off rather than hot-spin. A
+		// real backend that errors every call must not busy-loop (the memory oracle
+		// never errors, so this is dormant today).
 		idle = w.cfg.Backoff.next(idle)
 		select {
 		case <-ctx.Done():
