@@ -40,11 +40,23 @@ Current work state. Update constantly, delete items when done.
     `hash(workspace)%N` routing (not Cluster); `lease_token` on the hash; maintained
     `pending_tasks` for Stats; XAUTOCLAIM min-idle=0 (lease is the exclusivity gate);
     explicit `attempts` on the hash (oracle-exact, not PEL delivery_count).
-  - **GATED — the canonical head-to-head numbers:** reuses the M2 gated AWS sweep
-    (`make head-to-head` runs PG + Valkey 1/2/4-shard into one `sweep.csv` → overlaid
-    charts). The decision gate (proof #4): PG plateau vs Valkey scaling + loop-p99.
-  - **Next:** `/review` `feature/valkey`, then merge to `main`. (M-PR Honcho fork PR,
-    M4 writeup still ahead.)
+  - **MERGED to `main`** 2026-06-26 (`d1795c8`, --no-ff; reviewed). Not yet pushed.
+
+- **Next milestone — M3 head-to-head (own branch, 2026-06-27).** Reuses the M2 gated
+  AWS sweep to produce the canonical PG-vs-Valkey curves (decision gate / proof #4:
+  PG plateau vs Valkey 1→4-shard scaling + loop-p99). **Two prerequisites the merged
+  code does NOT yet cover — build these first on the branch:**
+  1. **Terraform is PG-only** (`deploy/terraform`: `pg`/`worker`/`producer` boxes, no
+     Valkey). Add a Valkey box — and for the shard sweep, 1/2/4 instances — running the
+     durability config from `docker-compose.yml` (appendonly/everysec/noeviction).
+  2. **No shard-COUNT capture in the sweep.** `sweep.csv`'s `backend` column is just
+     "valkey" regardless of 1/2/4 shards, so the linearity proof can't be plotted as
+     distinct series. Add a `shards` column (Result + CSV + plot.py series key) and run
+     `sweep-valkey` at 1/2/4 addrs. `make head-to-head` overlays PG vs Valkey but is
+     shard-count-blind until then.
+  - Measure-first (not blockers): producer count to saturate Valkey (it's fast — the
+    smokes went unsaturated at PLQ_PRODUCERS=8/64); the claim-funnel ceiling + the
+    deferred PG round-trips, all on the canonical sweep.
 
 - **M1 Postgres driver — DONE, merged to `main`.** All 8 methods; conformance 8/8;
   per-head flush. `postgres-driver.md` accepted+reconciled. (`talking-points.md`
