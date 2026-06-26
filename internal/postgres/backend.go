@@ -175,14 +175,11 @@ func (b *Backend) Ack(ctx context.Context, c *queue.ClaimedUnit, throughSeq int6
 		return false, err
 	}
 	// delete-on-ack + recompute in one statement. `head` is computed over the
-	// REMAINING tasks (seq > throughSeq) so it doesn't depend on the data-modifying
-	// CTE's visibility. `keep` (computed once via LATERAL) is the recomputed
-	// eligibility — per-head flush, never a sticky flag.
-	// `elig` computes the recomputed eligibility (= the keep/re-buffer decision) ONCE
-	// from the pre-ack row + the acked sum + the new head, so the four downstream
-	// uses (eligible, claimed_by, lease_token, lease_expires) share one source of
-	// truth. Per-head flush, never a sticky flag. `head` filters seq > throughSeq so
-	// it's independent of the data-modifying `del` CTE.
+	// REMAINING tasks (seq > throughSeq) so it's independent of the data-modifying
+	// `del` CTE. `elig` computes the recomputed eligibility (= the keep/re-buffer
+	// decision) ONCE from the pre-ack row + acked sum + new head, so the four
+	// downstream uses (eligible, claimed_by, lease_token, lease_expires) share one
+	// source of truth. Per-head flush, never a sticky flag.
 	var stillHeld bool
 	err = tx.QueryRow(ctx, `
 WITH del AS (
@@ -332,6 +329,41 @@ WHERE NOT eligible AND claimed_by IS NULL AND flush_deadline <= $1 AND pending_c
 func (b *Backend) Close() error {
 	b.pool.Close()
 	return nil
+}
+
+var (
+	_ queue.Stater   = (*Backend)(nil)
+	_ queue.Resetter = (*Backend)(nil)
+)
+
+// Stats reports queue depth cheaply — all over work_units (10^4–10^5 rows) plus a
+// small DLQ count, so it's safe to call once per second during a load run.
+func (b *Backend) Stats(ctx context.Context) (queue.Stats, error) {
+	var total, eligible, dlq int64
+	var oldestS float64
+	err := b.pool.QueryRow(ctx, `
+SELECT count(*),
+       count(*) FILTER (WHERE eligible AND claimed_by IS NULL),
+       COALESCE(EXTRACT(EPOCH FROM (now() - min(oldest_pending_at)
+         FILTER (WHERE NOT eligible AND claimed_by IS NULL))), 0),
+       (SELECT count(*) FROM dead_letters)
+FROM work_units`).Scan(&total, &eligible, &oldestS, &dlq)
+	if err != nil {
+		return queue.Stats{}, err
+	}
+	return queue.Stats{
+		TotalUnits:    total,
+		EligibleUnits: eligible,
+		DeadLetters:   dlq,
+		OldestBelowT:  time.Duration(oldestS * float64(time.Second)),
+	}, nil
+}
+
+// Reset truncates the queue tables (keeps tenant_config) — for resetting between
+// sweep points. Not part of the Backend contract; bench/test only.
+func (b *Backend) Reset(ctx context.Context) error {
+	_, err := b.pool.Exec(ctx, `TRUNCATE work_units, tasks, dead_letters`)
+	return err
 }
 
 // querier is satisfied by both *pgxpool.Pool and pgx.Tx.

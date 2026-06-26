@@ -5,10 +5,13 @@ work unit crosses a threshold (or its flush age-cap fires), then drained
 **exclusively, in order** by one worker — many units in parallel. Built on two
 backends behind one interface so they can be measured head-to-head.
 
-> **Status:** M0 scaffold. The contract, the shared worker loop, the in-memory
-> oracle, config, and the CLI are real and tested. Postgres (M1) and Valkey (M3)
-> drivers and the load-test harness (M2) are stubbed. See
-> [`.meta/roadmap.md`](.meta/roadmap.md).
+> **Status:** M0 scaffold + M1 Postgres driver + M2 load harness & proofs (local
+> half). The contract, worker loop, in-memory oracle, the Postgres backend, the
+> Zipfian load generator, metrics, and the deterministic proofs are real and
+> tested. Headline so far: the maintained-aggregate look-ahead stays ~flat
+> (0.35→0.48 ms) while the naive `SUM…GROUP BY` grows with task count
+> (6.4→74 ms) — **154× at 10⁶ tasks**. The canonical AWS sweep (M2 cloud half) and
+> Valkey (M3) are next. See [`.meta/roadmap.md`](.meta/roadmap.md).
 
 ## What & why
 
@@ -23,13 +26,16 @@ on throughput + latency with a measured head-to-head. The design docs:
 ## Quickstart
 
 ```sh
-make build    # compile + typecheck the shared code (default in-memory build)
-make test     # run the M0 proofs against the in-memory oracle
-make up       # bring up the postgres path locally (functional from M1)
+make build      # compile + typecheck the shared code (default in-memory build)
+make test       # unit + conformance tests (in-memory oracle)
+make up         # bring up a local postgres for the sweep
+make proofs     # ordering + look-ahead proofs (set PLQ_TEST_POSTGRES for the PG + 10^6 bench)
+make load-test  # the integrated local sweep → results/sweep.csv → results/*.png (needs matplotlib)
 ```
 
-`make load-test` is the one-command reproducibility promise (the worker sweep +
-throughput-vs-workers graph); it lands in M2.
+The canonical numbers run on AWS via `deploy/terraform/` (`make cloud-up` /
+`make cloud-down`) — the gated, spend-incurring step; everything above is verified
+locally against a Docker Postgres first.
 
 ## Architecture
 

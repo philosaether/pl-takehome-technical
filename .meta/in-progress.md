@@ -6,14 +6,20 @@ Current work state. Update constantly, delete items when done.
 
 ## Active
 
-- **M2 loadgen + the four proofs — drafting** on `feature/loadgen`. Real
-  producers (Zipfian `wu_key` churn, pinned RNG seed, configurable cost dist),
-  crash injection, worker sweep 1/10/100/1000, metrics export + throughput-vs-
-  workers graph, and the 4 deterministic proofs (ordering-under-crash, gate,
-  flush, look-ahead cost vs naive `SUM…GROUP BY`). Runs on the pinned cloud box
-  ($20 cap). The process-model sweep (zero|cost) locates the PG→Valkey cutover.
-  - **The deferred PG efficiency items get measured here** (Drain 2→1, Enqueue
-    tenant-cache miss) — optimize only if they compound; before/after = talking-point.
+- **M2 loadgen + proofs — LOCAL HALF BUILT + verified** on `feature/loadgen`
+  (design accepted, `designs/loadgen-and-proofs.md`). Done: Zipfian-churn producers,
+  the integrated `loadrun` harness (producers+workers+reaper+sampler, saturation
+  self-certified via the `Stater` backlog query), shared `metrics.go` (throughput/
+  claim-p99/loop-p99/backlog) wired into `worker`/`loadgen`/`loadrun`, goroutine
+  chaos, the ordering-under-crash proof (3-of-10, memory+PG), the **look-ahead
+  bench** (`CopyFrom` seed, EXPLAIN, vs naive `SUM…GROUP BY` — 154× at 10⁶ measured
+  locally), `scripts/plot.py`, Makefile sweep, and the **Terraform** harness
+  (validated, not applied).
+  - **GATED next step:** `make cloud-up` (terraform apply) + the canonical AWS
+    sweep, then `make cloud-down`. The only spend/irreversible action — kick off
+    when ready. Everything else is verified on the laptop + Docker PG.
+  - **Deferred PG efficiency items** (Drain 2→1, Enqueue tenant-cache miss) get
+    measured in the canonical sweep — optimize only if they compound (talking-point).
 
 - **M1 Postgres driver — DONE, reviewed, merged to `main`** (`feature/postgres-queue`).
   All 8 `queue.Backend` methods over Postgres; conformance 8/8 vs live postgres:16;

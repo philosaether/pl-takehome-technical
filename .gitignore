@@ -8,3 +8,9 @@
 # go
 *.test
 *.out
+
+# terraform
+deploy/terraform/.terraform/
+deploy/terraform/*.tfstate*
+__pycache__/
+*.pyc

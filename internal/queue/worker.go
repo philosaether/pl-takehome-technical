@@ -44,6 +44,14 @@ func (b BackoffConfig) next(d time.Duration) time.Duration {
 	return d
 }
 
+// Recorder receives loop telemetry (optional). metrics.Metrics implements it; the
+// queue package only depends on this interface, never on the metrics package.
+type Recorder interface {
+	Claim(d time.Duration, gotUnit bool) // a claim attempt: latency + whether a unit came back
+	Ack(tasks int)                       // tasks acked (throughput)
+	Loop(d time.Duration)                // claim/drain→ack wall time for one batch cycle
+}
+
 // WorkerConfig is the slice of config the worker loop needs. config.Config builds
 // it via WorkerConfig() — this keeps the queue package free of config imports.
 type WorkerConfig struct {
@@ -54,6 +62,8 @@ type WorkerConfig struct {
 	// OnProcess, if set, is called for each task just before its simulated work.
 	// The seam the M2 ordering/gate proofs hook to record the processing log.
 	OnProcess func(WorkUnitKey, Task)
+	// Recorder, if set, receives throughput/latency telemetry (M2 metrics).
+	Recorder Recorder
 }
 
 // Worker runs the claim→drain→process→ack loop against a Backend. The loop is
@@ -94,11 +104,16 @@ func (w *Worker) Run(ctx context.Context) error {
 }
 
 func (w *Worker) runOnce(ctx context.Context) (didWork bool, err error) {
+	t0 := time.Now()
 	unit, err := w.be.Claim(ctx, w.id, w.cfg.Lease)
+	if w.cfg.Recorder != nil {
+		w.cfg.Recorder.Claim(time.Since(t0), err == nil && unit != nil)
+	}
 	if err != nil || unit == nil {
 		return false, err // nil unit → nothing eligible → caller backs off
 	}
 	for {
+		loopStart := time.Now()
 		tasks, err := w.be.Drain(ctx, unit, w.cfg.Batch)
 		if err != nil {
 			return true, err
@@ -118,8 +133,15 @@ func (w *Worker) runOnce(ctx context.Context) (didWork bool, err error) {
 		}
 		stop()
 		held, err := w.be.Ack(ctx, unit, tasks[len(tasks)-1].Seq)
-		if err != nil || !held {
-			return true, err // Ack released the unit → done with it
+		if err != nil {
+			return true, err
+		}
+		if w.cfg.Recorder != nil {
+			w.cfg.Recorder.Ack(len(tasks))
+			w.cfg.Recorder.Loop(time.Since(loopStart))
+		}
+		if !held {
+			return true, nil // Ack released the unit → done with it
 		}
 	}
 }

@@ -6,3 +6,4 @@
 | [valkey-work-unit-queue.md](valkey-work-unit-queue.md) | accepted · amended 2026-06-26 (A1) | 2026-06-25 | Path 2 — same queue on Valkey/Redis (Streams+ZSET+Lua); the upgrade to justify on throughput+latency. A1: isolation + fairness + shard by workspace |
 | [scaffold.md](scaffold.md) | accepted | 2026-06-26 | M0 — Go module, the Backend driver interface (apples-to-apples contract), shared worker loop + loadgen, per-path images, config, make load-test |
 | [postgres-driver.md](postgres-driver.md) | accepted | 2026-06-26 | M1 — internal/postgres build design: schema + per-method SQL + pgx wiring against the Backend contract; conformance suite vs the oracle |
+| [loadgen-and-proofs.md](loadgen-and-proofs.md) | accepted | 2026-06-26 | M2 — Zipfian churn loadgen, worker sweep + throughput graph, the 4 proofs (incl. look-ahead vs naive SUM…GROUP BY at 10⁶), process-model cutover sweep; Terraform harness |

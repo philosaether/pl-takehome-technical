@@ -1,6 +1,9 @@
 GO ?= go
+# Local sweep target (override for the cloud boxes):
+PLQ_POSTGRES_DSN ?= postgres://plq:plq@localhost:5433/plq?sslmode=disable
+WORKERS_SWEEP ?= 1 10 100 1000
 
-.PHONY: build test proofs fmt vet images up down load-test load-test-valkey clean
+.PHONY: build test proofs fmt vet images up down load-test load-test-valkey graph cloud-up cloud-down clean
 
 ## build: compile the default (in-memory) binary + typecheck all shared code
 build:
@@ -10,9 +13,10 @@ build:
 test:
 	$(GO) test ./...
 
-## proofs: deterministic proofs — M0 smoke proofs live in internal/queue; M2 fills proofs/
+## proofs: deterministic proofs (gate/flush in conformance; ordering + look-ahead in proofs/).
+## Set PLQ_TEST_POSTGRES to also run them against postgres + the 10^6-row look-ahead bench.
 proofs:
-	$(GO) test ./internal/queue/... ./proofs/...
+	$(GO) test ./internal/queue/... ./internal/conformance/... ./internal/memory/... ./proofs/...
 
 ## fmt / vet: formatting + static checks
 fmt:
@@ -35,14 +39,33 @@ up:
 down:
 	docker compose down -v
 
-## load-test: THE one-command repro. M0 stubs the harness; M2 runs the sweep +
-## emits the throughput-vs-workers graph to ./results. Wired now, real in M2.
+## load-test: the integrated local sweep (workers x {zero, cost@2ms}) against the
+## postgres path, then render the graph. Needs a reachable PLQ_POSTGRES_DSN
+## (e.g. `make up` or a local container on :5433). Env-per-run: one process/point.
 load-test:
-	@echo "M0: load-test harness lands in M2 (sweep 1/10/100/1000 x process-model grid)."
-	@echo "    Today: 'make test' runs the in-memory M0 proofs; 'make up' brings up the postgres path."
+	@mkdir -p results
+	@for p in zero cost; do for n in $(WORKERS_SWEEP); do \
+	  echo ">>> workers=$$n process=$$p"; \
+	  PLQ_BACKEND=postgres PLQ_POSTGRES_DSN="$(PLQ_POSTGRES_DSN)" \
+	  PLQ_WORKERS=$$n PLQ_PROCESS=$$p PLQ_PROCESS_BASE=2ms PLQ_PRODUCERS=64 PLQ_RESULTS=./results \
+	  $(GO) run -tags postgres ./cmd/plq loadrun ; \
+	done; done
+	$(MAKE) graph
+
+## graph: render results/*.csv → PNGs (needs matplotlib: pip install matplotlib)
+graph:
+	python3 scripts/plot.py results
 
 load-test-valkey:
-	@echo "M0: valkey head-to-head lands in M3 (see roadmap.md)."
+	@echo "valkey head-to-head lands in M3 (see roadmap.md)."
+
+## cloud-up / cloud-down: provision/tear down the canonical AWS boxes (M2 cloud half).
+## cloud-down is `terraform destroy` — the spend control. GATED: only run when ready.
+cloud-up:
+	cd deploy/terraform && terraform init && terraform apply -auto-approve
+
+cloud-down:
+	cd deploy/terraform && terraform destroy -auto-approve
 
 clean:
 	rm -rf ./results

@@ -37,6 +37,18 @@ type Config struct {
 	LoadKeys  int
 	LoadTasks int
 	LoadCost  int64
+
+	// M2 load harness.
+	Seed       int64
+	Producers  int
+	Duration   time.Duration
+	Warmup     time.Duration
+	WorkingSet int
+	ZipfS      float64
+	BirthRate  float64
+	CostLo     int64
+	CostHi     int64
+	ResultsDir string
 }
 
 // Load reads configuration from PLQ_* env vars, applying defaults.
@@ -62,7 +74,27 @@ func Load() Config {
 		LoadKeys:      atoi("PLQ_LOAD_KEYS", 100),
 		LoadTasks:     atoi("PLQ_LOAD_TASKS", 10000),
 		LoadCost:      atoi64("PLQ_LOAD_COST", 100),
+
+		Seed:       atoi64("PLQ_SEED", 1),
+		Producers:  atoi("PLQ_PRODUCERS", 8),
+		Duration:   dur("PLQ_DURATION", 30*time.Second),
+		Warmup:     dur("PLQ_WARMUP", 5*time.Second),
+		WorkingSet: atoi("PLQ_WORKING_SET", 1000),
+		ZipfS:      atof("PLQ_ZIPF_S", 1.2),
+		BirthRate:  atof("PLQ_BIRTH_RATE", 0.02),
+		CostLo:     atoi64("PLQ_COST_LO", 10),
+		CostHi:     atoi64("PLQ_COST_HI", 50),
+		ResultsDir: env("PLQ_RESULTS", "./results"),
 	}
+}
+
+func atof(k string, def float64) float64 {
+	if v, ok := os.LookupEnv(k); ok {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			return f
+		}
+	}
+	return def
 }
 
 // WorkerConfig projects the worker-relevant knobs into the queue package, keeping

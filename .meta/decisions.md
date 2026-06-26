@@ -271,3 +271,26 @@ postgres:16 (8/8 conformance green):
 - Deferred: two PG-driver efficiency round-trips (Drain 2→1, Enqueue tenant-cache
   miss) → roadmap M2, measure-first. Strong before/after talking-point if they pay
   off post-load-test.
+
+## 2026-06-26 — ACCEPTED: loadgen-and-proofs design (M2)
+
+Blessed via /ship; building the **local half first**, the **EC2 run gated**.
+`designs/loadgen-and-proofs.md`. Build plan: Zipfian-churn producers, integrated
+`loadrun` (dev) + split worker/loadgen across boxes (canonical, worker-alone =
+production-match), shared `metrics.go` (throughput/claim-p99/loop-p99/backlog),
+matplotlib graph, the 4 proofs (ordering-under-crash 3-of-10 trace + look-ahead
+10⁶ vs naive `SUM…GROUP BY`; gate/flush already in conformance). Resolutions:
+- **Run topology:** integrated for dev/smoke; **split processes** for canonical so
+  the worker pool is alone on its box. Headline metrics live in the worker process;
+  saturation self-certifies via the worker-box `Stater` backlog query. Adds an
+  optional `Stater` interface (postgres implements; `queue.Backend` unchanged).
+- **Matrix:** full `{1,10,100,1000} × {zero, cost@2ms}`, **60 s/point** (~$1 — the
+  cost is instance *uptime*, not the test). Extend cost points if the curve's dull.
+- **Cloud:** AWS EC2, worker `m5.xlarge` (plausible EKS node) alone, PG separate,
+  producer `m5.large`. **Provisioned via Terraform** (`make cloud-up/down`) —
+  atomic `terraform destroy` is the spend control + IaC audition signal.
+- Graph: matplotlib (`scripts/plot.py`). Chaos: goroutine-cancel. Look-ahead seed:
+  `pgx.CopyFrom` (bench claim, not enqueue).
+- **Gated step:** `terraform apply` + the canonical EC2 sweep (the only spend +
+  irreversible action) — Phil kicks it off; local half is fully verifiable on the
+  laptop + Docker PG first.
