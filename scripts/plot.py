@@ -53,6 +53,49 @@ def plot_throughput(results_dir):
     print("wrote", out)
 
 
+def plot_latency(results_dir):
+    """loop_p99 vs workers — the latency companion to the throughput plateau.
+    Past saturation, throughput flattens while this climbs (workers contend on
+    claims/acks). In zero-work mode this is the queue's own loop overhead; in
+    cost mode it's dominated by the simulated work (read it in the M3 PG-vs-Valkey
+    comparison, where that cancels)."""
+    path = os.path.join(results_dir, "sweep.csv")
+    if not os.path.exists(path):
+        print(f"skip latency: {path} not found")
+        return
+    series = defaultdict(list)
+    with open(path) as f:
+        for row in csv.DictReader(f):
+            p99 = float(row["loop_p99_ms"])
+            if p99 <= 0:  # log scale can't plot 0 (no samples at that point)
+                continue
+            series[row["process"]].append(
+                (int(row["workers"]), p99, row["saturated"] == "true")
+            )
+    if not series:
+        print("skip latency: no loop_p99 samples")
+        return
+    fig, ax = plt.subplots(figsize=(8, 5))
+    for proc, pts in sorted(series.items()):
+        pts.sort()
+        xs = [w for w, _, _ in pts]
+        ys = [p for _, p, _ in pts]
+        ax.plot(xs, ys, marker="o", label=f"process={proc}")
+        for w, p, sat in pts:
+            if not sat:
+                ax.annotate("unsat", (w, p), fontsize=7, color="red")
+    ax.set_xscale("log")
+    ax.set_yscale("log")
+    ax.set_xlabel("workers")
+    ax.set_ylabel("loop p99 (ms)")
+    ax.set_title("Loop-latency p99 vs workers (claim→drain→process→ack)")
+    ax.legend()
+    ax.grid(True, which="both", alpha=0.3)
+    out = os.path.join(results_dir, "latency.png")
+    fig.savefig(out, dpi=120, bbox_inches="tight")
+    print("wrote", out)
+
+
 def plot_lookahead(results_dir):
     path = os.path.join(results_dir, "lookahead.csv")
     if not os.path.exists(path):
@@ -82,4 +125,5 @@ def plot_lookahead(results_dir):
 if __name__ == "__main__":
     rd = sys.argv[1] if len(sys.argv) > 1 else "results"
     plot_throughput(rd)
+    plot_latency(rd)
     plot_lookahead(rd)

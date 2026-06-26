@@ -28,7 +28,7 @@ run that yields the headline numbers.
 | Zipfian churn producers | `internal/loadgen/producer.go` | enqueue load with born/drained keys |
 | Worker-count sweep (1/10/100/1000) + saturation check | `internal/loadgen/harness.go`, `plq loadrun` | `results/sweep.csv` |
 | Metrics (throughput, claim p99, backlog, lease/DLQ rates, loop p99) | `internal/loadgen/metrics.go` | periodic CSV + end summary |
-| Throughput-vs-workers graph | `scripts/plot.py` | `results/throughput.png` |
+| Throughput-vs-workers graph + loop-p99-vs-workers companion | `scripts/plot.py` | `results/throughput.png`, `results/latency.png` |
 | Proof 1 — ordering-under-crash (3-of-10, logged trace) | `proofs/ordering_test.go` | deterministic test |
 | Proofs 2,3 — gate, flush | already in `internal/conformance` | deterministic tests |
 | Proof 4 — look-ahead cost vs naive `SUM…GROUP BY` | `proofs/lookahead_test.go` | EXPLAIN + time-vs-taskcount table/graph |
