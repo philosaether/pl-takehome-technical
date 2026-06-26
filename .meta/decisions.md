@@ -229,3 +229,30 @@ resolutions from the draft:
 - New artifact: `.meta/enhancements.md` — backlog of flagged "possible
   enhancements" bullets; curate the most compelling set into the 1-page brief at M4.
 - Go toolchain absent on the box → installing via brew as the first build step.
+
+## 2026-06-26 — ACCEPTED: postgres-driver design (M1)
+
+Blessed via /ship; building now on `feature/postgres-queue`. Build design for
+`internal/postgres` against the M0 `queue.Backend` contract (concrete schema +
+per-method SQL + pgx wiring). `designs/postgres-driver.md`. Key resolutions from
+the draft iteration:
+- **Composite natural key `(ws,sess,peer)`** instead of the accepted design's
+  hashed `wu_key bytea` — 1:1 with the contract type, no hash/decode, `workspace`
+  native for tenant predicates. The one deliberate divergence (flagged; revisit
+  only if index width bites).
+- **`lease_token uuid` + `max_wait_ms`** added to `work_units` (ABA-safe lease
+  validation that the contract's `LeaseToken` models; denormalized max_wait).
+- **Self-validating ack** — `DELETE … RETURNING cost` summed in the ack CTE (no
+  caller-supplied cost); `keep` computed in-SQL via LATERAL (it depends on post-ack
+  state, can't be a param). Fewer statements *and* a driver-owned aggregate invariant.
+- **Per-head flush (OQ1)** — eligibility recomputed every ack as `remaining ≥ T OR
+  new-head aged`; **drops the M0 oracle's sticky `flushed` bool** (M1 touches M0
+  code — not purely additive). The conformance suite pins per-head for both
+  backends. Logged in `talking-points.md` (new artifact: interesting
+  decisions/tradeoffs to curate into the 1-pager at M4).
+- **Conformance suite** `RunConformance(t, factory)` — same scenarios vs memory
+  (CI, always) and postgres (gated by `PLQ_TEST_POSTGRES`). The apples-to-apples
+  *correctness* guarantee; pre-stages the M2 proofs.
+- **Embedded idempotent `schema.sql`** (`go:embed`, no migration tool); deferred:
+  tombstone-TTL reaping + golang-migrate → `enhancements.md`.
+- `pgx/v5` added (bumped the go directive to 1.25 → Dockerfiles follow).

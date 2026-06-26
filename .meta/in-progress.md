@@ -6,14 +6,16 @@ Current work state. Update constantly, delete items when done.
 
 ## Active
 
-- **M1 Postgres driver — drafting** on `feature/postgres-queue`. Flesh out
-  `internal/postgres` against the accepted `queue.Backend` contract: schema
-  (`work_units`, HASH-partitioned `tasks`, `dead_letters`, `tenant_config`,
-  `wu_claimable` partial index), maintained `pending_cost` aggregate on enqueue
-  (the I3 look-ahead win), `FOR UPDATE SKIP LOCKED` claim, in-order drain +
-  delete-on-ack, reaper (flush-flip + lease reclaim), poison→DLQ. Add `pgx` to
-  `go.mod`. Mirrors `designs/postgres-work-unit-queue.md` (+A1).
-  - The in-memory oracle is the reference the PG driver must match.
+- **M1 Postgres driver — building** on `feature/postgres-queue` (design accepted
+  via /ship, `designs/postgres-driver.md`). `internal/postgres` against the
+  `queue.Backend` contract: embedded `schema.sql`, per-method SQL (self-validating
+  ack CTE, `SKIP LOCKED` claim, two-UPDATE reaper, poison→DLQ), pgx pool + tenant
+  cache. Plus: **align the oracle to per-head flush** (drop sticky `flushed` from
+  `internal/memory`), and a **conformance suite** (`RunConformance(t, factory)`)
+  run vs memory (always) + postgres (gated by `PLQ_TEST_POSTGRES`).
+  - `pgx/v5` added (go directive → 1.25; Dockerfiles bumped to match).
+  - Composite key `(ws,sess,peer)`; `lease_token`/`max_wait_ms` schema adds.
+  - Interesting decisions → `talking-points.md` (curate at M4).
 
 - **M0 scaffold — DONE, reviewed, merged to `main`** (`feature/scaffold`,
   `designs/scaffold.md` accepted + reconciled). The apples-to-apples contract is

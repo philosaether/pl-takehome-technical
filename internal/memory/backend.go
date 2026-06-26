@@ -23,7 +23,6 @@ type unit struct {
 	maxWait       time.Duration
 	oldestPending time.Time
 	flushDeadline time.Time
-	flushed       bool // once flush-promoted, stays eligible until drained
 	eligible      bool
 	claimedBy     queue.WorkerID
 	lease         queue.LeaseToken
@@ -182,11 +181,15 @@ func (b *Backend) Ack(_ context.Context, c *queue.ClaimedUnit, throughSeq int64)
 }
 
 // recompute refreshes a unit's head-derived metadata after the task list is
-// mutated from the front. Assumes len(u.tasks) > 0.
+// mutated from the front. Assumes len(u.tasks) > 0. Per-head flush: a unit stays
+// eligible iff it's still at/above T OR its *new* head has already aged past the
+// flush deadline — never a sticky flag (so draining an aged head doesn't drag the
+// newer, not-yet-aged work behind it out of the buffer).
 func (b *Backend) recompute(u *unit) {
 	u.oldestPending = u.enqAt[0]
 	u.flushDeadline = u.oldestPending.Add(u.maxWait)
-	u.eligible = u.pendingCost >= u.threshold || u.flushed
+	u.eligible = u.pendingCost >= u.threshold ||
+		(!u.flushDeadline.IsZero() && !time.Now().Before(u.flushDeadline))
 }
 
 func (b *Backend) Release(_ context.Context, c *queue.ClaimedUnit) error {
@@ -251,8 +254,7 @@ func (b *Backend) ReapExpired(_ context.Context, now time.Time) (int, int, error
 		}
 		if u.claimedBy == "" && !u.eligible && len(u.tasks) > 0 &&
 			!u.flushDeadline.IsZero() && !now.Before(u.flushDeadline) {
-			u.eligible = true // flush age-cap fired
-			u.flushed = true
+			u.eligible = true // flush age-cap fired (the oldest task aged out)
 			flushed++
 		}
 	}

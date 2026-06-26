@@ -26,6 +26,17 @@ Append-forward. Don't prune — pruning happens at selection time in M4.
 
 ---
 
+- **golang-migrate for schema migrations.** M1 embeds an idempotent `schema.sql`
+  (`go:embed` + `CREATE IF NOT EXISTS`) run on startup — zero deps, clone-and-run.
+  The production answer is versioned migrations (golang-migrate / goose): ordered
+  up/down, schema-version tracking, safe rollouts. *Source: postgres-driver M1.*
+
+- **Tombstone TTL reaping.** Drained units are tombstoned in place (row kept for
+  cheap revival). A `DELETE FROM work_units WHERE pending_cost=0 AND idle > wu_ttl`
+  sweep GCs tombstones that never come back — keeps `work_units` from accumulating
+  dead rows under high key churn. Deferred from M1 (not on the correctness path);
+  pairs with the M2 vacuum/bloat story. *Source: postgres-driver M1.*
+
 ## Candidates already living in the designs (pull in if room)
 
 - **Per-tenant fairness scheduling (WFQ).** The A1 amendment names the one-seam

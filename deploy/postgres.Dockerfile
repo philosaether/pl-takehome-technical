@@ -1,5 +1,5 @@
 # Path 1 image: single-driver binary (only the postgres driver is compiled in).
-FROM golang:1.23 AS build
+FROM golang:1.25 AS build
 WORKDIR /src
 COPY go.mod ./
 # go.sum is added when the first dependency lands (M1: pgx).
