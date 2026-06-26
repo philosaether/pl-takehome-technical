@@ -67,20 +67,23 @@ numbers + switch-thresholds (+ the Honcho PR); the rest = the Valkey stack.
 - [x] **Bonus:** full working in-memory backend (correctness oracle) + M0 smoke
       proofs (in-order drain, gate); reviewed + fixed before merge.
 
-## M1 — Path 1: Postgres queue (must) · `feature/postgres-queue` (build)
+## M1 — Path 1: Postgres queue ✅ DONE (merged to `main` 2026-06-26) · `feature/postgres-queue`
 
-The this-month answer *and* the baseline. Mirrors the accepted PG design.
+The this-month answer *and* the baseline. Mirrors the accepted PG design + driver design.
+Built, reviewed, verified 8/8 conformance vs live postgres:16.
 
-- [ ] Schema: `work_units`, `tasks` (HASH-partitioned, 2 parts), `dead_letters`,
-      `tenant_config`, `wu_claimable` partial index.
-- [ ] `enqueue` — maintained `pending_cost` aggregate under the unit row lock
-      (the I3 win — kills the `SUM…GROUP BY`); per-unit `seq`.
-- [ ] `claim` — `FOR UPDATE SKIP LOCKED` on the partial index (exclusive,
+- [x] Schema: `work_units`, `tasks` (HASH-partitioned, 2 parts), `dead_letters`,
+      `tenant_config`, `wu_claimable` partial index (+ `wu_leased`/`wu_flushable`).
+- [x] `enqueue` — maintained `pending_cost` aggregate under the unit row lock
+      (the I3 win — kills the `SUM…GROUP BY`); per-unit `seq` (0-based).
+- [x] `claim` — `FOR UPDATE SKIP LOCKED` on the partial index (exclusive,
       contention-free).
-- [ ] `drain + ack` — in-order batch, delete-on-ack, transactional-ack path.
-- [ ] Reaper — flush-flip (age-cap eligibility) + lease-expiry reclaim.
-- [ ] Failure modes: poison→DLQ (`attempts`), hot-unit surfacing, wedged-unit
-      force-release.
+- [x] `drain + ack` — in-order batch, delete-on-ack, self-validating ack CTE,
+      keep-or-release.
+- [x] Reaper — flush-flip (per-head age-cap) + lease-expiry reclaim.
+- [x] Failure modes: poison→DLQ (head-guarded), lease reclaim.
+- [x] **Bonus:** the conformance suite (8 scenarios) — oracle as reference; the
+      apples-to-apples *correctness* guarantee.
 
 ## M2 — Load generator + the four proofs (must) · `feature/loadgen`
 

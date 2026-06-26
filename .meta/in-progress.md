@@ -6,16 +6,19 @@ Current work state. Update constantly, delete items when done.
 
 ## Active
 
-- **M1 Postgres driver — building** on `feature/postgres-queue` (design accepted
-  via /ship, `designs/postgres-driver.md`). `internal/postgres` against the
-  `queue.Backend` contract: embedded `schema.sql`, per-method SQL (self-validating
-  ack CTE, `SKIP LOCKED` claim, two-UPDATE reaper, poison→DLQ), pgx pool + tenant
-  cache. Plus: **align the oracle to per-head flush** (drop sticky `flushed` from
-  `internal/memory`), and a **conformance suite** (`RunConformance(t, factory)`)
-  run vs memory (always) + postgres (gated by `PLQ_TEST_POSTGRES`).
-  - `pgx/v5` added (go directive → 1.25; Dockerfiles bumped to match).
-  - Composite key `(ws,sess,peer)`; `lease_token`/`max_wait_ms` schema adds.
-  - Interesting decisions → `talking-points.md` (curate at M4).
+- **M2 loadgen + the four proofs — drafting** on `feature/loadgen`. Real
+  producers (Zipfian `wu_key` churn, pinned RNG seed, configurable cost dist),
+  crash injection, worker sweep 1/10/100/1000, metrics export + throughput-vs-
+  workers graph, and the 4 deterministic proofs (ordering-under-crash, gate,
+  flush, look-ahead cost vs naive `SUM…GROUP BY`). Runs on the pinned cloud box
+  ($20 cap). The process-model sweep (zero|cost) locates the PG→Valkey cutover.
+  - **The deferred PG efficiency items get measured here** (Drain 2→1, Enqueue
+    tenant-cache miss) — optimize only if they compound; before/after = talking-point.
+
+- **M1 Postgres driver — DONE, reviewed, merged to `main`** (`feature/postgres-queue`).
+  All 8 `queue.Backend` methods over Postgres; conformance 8/8 vs live postgres:16;
+  oracle aligned to per-head flush. Designs `postgres-driver.md` (accepted+reconciled).
+  - `pgx/v5` added (go directive → 1.25). Interesting decisions → `talking-points.md`.
 
 - **M0 scaffold — DONE, reviewed, merged to `main`** (`feature/scaffold`,
   `designs/scaffold.md` accepted + reconciled). The apples-to-apples contract is
