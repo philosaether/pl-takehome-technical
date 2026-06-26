@@ -356,3 +356,25 @@ head-to-head overlay (proof #4 on the M2 charts). Key decisions:
   one accepted asymmetry vs the stateless ack.
 - Resolved-by-measurement (not build blockers): claim-funnel ceiling, latency-under-
   durability → the head-to-head sweep (1/2/4 shards vs 1 PG primary).
+
+## 2026-06-26 — M3 /review: 4 fixes + paged-ack regression test
+
+Reviewed `feature/valkey` (3 parallel agents: bugs / efficiency / design reconcile).
+Driver was already conformance-8/8 + ordering-under-crash green; applied + re-verified:
+- **Paged the ack PEL scan** (`scripts.go`) — was `XPENDING - + 1000`; the "stateless
+  PEL scan" is only correct while in-flight ≤ that cap. Now pages with exclusive
+  `(`-cursor + early-break once seq > through (entries are seq-ordered), correct for
+  any `PLQ_BATCH`. New gated regression test `TestAckPagesLargePEL` (600-deep PEL, 3
+  pages) confirms no orphaning.
+- **Tombstone DEL vs EXPIRE** — documented the unlisted divergence. DEL (immediate) is
+  the right call: matches the oracle's immediate delete and avoids carrying stale
+  next_seq/group state into a revival; forfeits the design's "free TTL tombstone"
+  ergonomic, which was never load-bearing. Comment + frontmatter corrected.
+- **Nil-guard** in the ack loop (`c ~= nil`) — free robustness vs a malformed entry.
+- **Stats pipelined** via `DoMulti` — was 5 sequential round-trips/shard on the
+  sampling path; now one.
+- **Dismissed (with reasoning):** Drain doesn't fail-fast on a lease lost mid-Drain —
+  harmless (Ack's token re-check is the real exclusivity boundary, at-least-once +
+  idempotent posture, I1 order preserved). Documented in a Drain comment, not coded
+  around (would add a hot-path round-trip to close a window Ack already closes).
+- Reconciled `valkey-driver.md` frontmatter (Divergences/Deferred).

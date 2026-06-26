@@ -163,6 +163,11 @@ func (b *Backend) Drain(ctx context.Context, c *queue.ClaimedUnit, max int) ([]q
 	m := member(c.Key)
 	s := "s:" + m
 	// Lease check first — distinguishes ErrLeaseLost from an empty (clean) drain.
+	// This is a best-effort fail-fast, NOT the exclusivity boundary: a reclaim can
+	// land between here and the reads below. That's harmless — Ack re-validates the
+	// token atomically (the real boundary), the contract is at-least-once + idempotent,
+	// and stream-ID order is preserved regardless. So a lost lease mid-Drain costs at
+	// most some wasted work, never a double-ack or an ordering violation.
 	tok, err := sh.Do(ctx, sh.B().Hget().Key("wu:"+m).Field("lease_token").Build()).ToString()
 	if err != nil || tok != string(c.Lease) {
 		return nil, queue.ErrLeaseLost
@@ -262,18 +267,26 @@ func (b *Backend) Stats(ctx context.Context) (queue.Stats, error) {
 	var st queue.Stats
 	now := time.Now().UnixMilli()
 	for _, sh := range b.shards {
-		elig, _ := sh.Do(ctx, sh.B().Zcard().Key("eligible").Build()).AsInt64()
-		pf, _ := sh.Do(ctx, sh.B().Zcard().Key("pending_flush").Build()).AsInt64()
-		ls, _ := sh.Do(ctx, sh.B().Zcard().Key("leases").Build()).AsInt64()
-		dlq, _ := sh.Do(ctx, sh.B().Xlen().Key("dlq").Build()).AsInt64()
-		pending, _ := sh.Do(ctx, sh.B().Get().Key("pending_tasks").Build()).AsInt64()
+		// One pipelined round-trip per shard (Stats runs on the sampling path).
+		r := sh.DoMulti(ctx,
+			sh.B().Zcard().Key("eligible").Build(),
+			sh.B().Zcard().Key("pending_flush").Build(),
+			sh.B().Zcard().Key("leases").Build(),
+			sh.B().Xlen().Key("dlq").Build(),
+			sh.B().Get().Key("pending_tasks").Build(),
+			sh.B().Zrange().Key("pending_flush").Min("0").Max("0").Byscore().Limit(0, 1).Withscores().Build(),
+		)
+		elig, _ := r[0].AsInt64()
+		pf, _ := r[1].AsInt64()
+		ls, _ := r[2].AsInt64()
+		dlq, _ := r[3].AsInt64()
+		pending, _ := r[4].AsInt64()
 		st.TotalUnits += elig + pf + ls
 		st.EligibleUnits += elig
 		st.PendingTasks += pending
 		st.DeadLetters += dlq
 		// earliest pending_flush deadline → oldest below-T age (approx, default max_wait).
-		if z, err := sh.Do(ctx, sh.B().Zrange().Key("pending_flush").Min("0").Max("0").Byscore().
-			Limit(0, 1).Withscores().Build()).AsZScores(); err == nil && len(z) == 1 {
+		if z, err := r[5].AsZScores(); err == nil && len(z) == 1 {
 			oldestMs := int64(z[0].Score) - b.defWait.Milliseconds()
 			if age := time.Duration(now-oldestMs) * time.Millisecond; age > st.OldestBelowT {
 				st.OldestBelowT = age

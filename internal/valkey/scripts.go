@@ -95,34 +95,47 @@ local wu = 'wu:'..m
 local s = 's:'..m
 if redis.call('HGET', wu, 'lease_token') ~= ARGV[2] then return redis.error_reply('LEASELOST') end
 local through = tonumber(ARGV[3])
-local pend = redis.call('XPENDING', s, 'g', '-', '+', 1000)
 local acked_cost = 0
 local acked_n = 0
-for _, p in ipairs(pend) do
-  local id = p[1]
-  local e = redis.call('XRANGE', s, id, id)
-  if e[1] then
-    local fv = e[1][2]
-    local sq, c
-    for i=1,#fv,2 do
-      if fv[i]=='seq' then sq=tonumber(fv[i+1]) end
-      if fv[i]=='c'   then c =tonumber(fv[i+1]) end
+-- Scan this consumer's PEL in stream-ID (== seq) order and ack/del every entry with
+-- seq <= through. Paged so it's correct for ANY in-flight depth (PEL is bounded by
+-- the drain batch, but never assume batch < a magic cap); entries are seq-ordered,
+-- so we stop the moment we pass the through-seq.
+local start = '-'
+local page = 256
+while true do
+  local pend = redis.call('XPENDING', s, 'g', start, '+', page)
+  if pend[1] == nil then break end
+  local done = false
+  for _, p in ipairs(pend) do
+    local id = p[1]
+    start = '(' .. id   -- exclusive: resume after this id on the next page
+    local e = redis.call('XRANGE', s, id, id)
+    if e[1] then
+      local fv = e[1][2]
+      local sq, c
+      for i=1,#fv,2 do
+        if fv[i]=='seq' then sq=tonumber(fv[i+1]) end
+        if fv[i]=='c'   then c =tonumber(fv[i+1]) end
+      end
+      if sq ~= nil and sq > through then done = true; break end   -- past the prefix: stop
+      if sq ~= nil and c ~= nil then
+        redis.call('XACK', s, 'g', id)
+        redis.call('XDEL', s, id)
+        acked_cost = acked_cost + c
+        acked_n = acked_n + 1
+      end
+    else
+      redis.call('XACK', s, 'g', id)   -- entry already gone; drop from PEL
     end
-    if sq ~= nil and sq <= through then
-      redis.call('XACK', s, 'g', id)
-      redis.call('XDEL', s, id)
-      acked_cost = acked_cost + c
-      acked_n = acked_n + 1
-    end
-  else
-    redis.call('XACK', s, 'g', id)   -- entry already gone; drop from PEL
   end
+  if done or #pend < page then break end
 end
 local total = redis.call('HINCRBY', wu, 'pending_cost', -acked_cost)
 if acked_n > 0 then redis.call('DECRBY', 'pending_tasks', acked_n) end
 redis.call('HSET', wu, 'attempts', 0)   -- reset retry counter on successful ack (oracle parity)
 local head = redis.call('XRANGE', s, '-', '+', 'COUNT', 1)
-if not head[1] then                      -- empty → tombstone (free GC via key TTL/DEL)
+if not head[1] then                      -- empty → tombstone via DEL (immediate, oracle parity)
   redis.call('ZREM','leases', m); redis.call('ZREM','eligible', m); redis.call('ZREM','pending_flush', m)
   redis.call('DEL', wu); redis.call('DEL', s)
   return 0
