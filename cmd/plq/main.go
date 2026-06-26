@@ -87,28 +87,19 @@ func runWorker(ctx context.Context, be queue.Backend, cfg config.Config) {
 	wc := cfg.WorkerConfig()
 	wc.Recorder = m
 	go reapLoopM(ctx, be, m, cfg)
-	go func() { // throughput/backlog line each second (the canonical worker-box log)
-		t := time.NewTicker(time.Second)
-		defer t.Stop()
-		var last int64
-		stater, _ := be.(queue.Stater)
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-t.C:
-				a := m.Acked.Load()
-				backlog := int64(-1)
-				if stater != nil {
-					if s, err := stater.Stats(ctx); err == nil {
-						backlog = s.EligibleUnits
-					}
-				}
-				log.Printf("worker: %d acks/s (total %d) backlog=%d loop_p99=%s", a-last, a, backlog, m.LoopP99())
-				last = a
+	stater, _ := be.(queue.Stater)
+	var last int64
+	go everySecond(ctx, func() { // throughput/backlog line each second (canonical worker-box log)
+		a := m.Acked.Load()
+		backlog := int64(-1)
+		if stater != nil {
+			if s, err := stater.Stats(ctx); err == nil {
+				backlog = s.EligibleUnits
 			}
 		}
-	}()
+		log.Printf("worker: %d acks/s (total %d) backlog=%d loop_p99=%s", a-last, a, backlog, m.LoopP99())
+		last = a
+	})
 	_ = queue.NewPool(be, cfg.Workers, wc).Run(ctx)
 }
 
@@ -116,21 +107,12 @@ func runLoadgen(ctx context.Context, be queue.Backend, cfg config.Config) {
 	log.Printf("loadgen: producers=%d working_set=%d zipf_s=%.2f birth=%.3f",
 		cfg.Producers, cfg.WorkingSet, cfg.ZipfS, cfg.BirthRate)
 	m := loadgen.NewMetrics()
-	go func() {
-		t := time.NewTicker(time.Second)
-		defer t.Stop()
-		var last int64
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-t.C:
-				n := m.Enqueued.Load()
-				log.Printf("loadgen: %d enq/s (total %d)", n-last, n)
-				last = n
-			}
-		}
-	}()
+	var last int64
+	go everySecond(ctx, func() {
+		n := m.Enqueued.Load()
+		log.Printf("loadgen: %d enq/s (total %d)", n-last, n)
+		last = n
+	})
 	loadgen.RunProducers(ctx, be, m, workload(cfg), cfg.Producers)
 }
 
@@ -148,6 +130,7 @@ func runLoadrun(ctx context.Context, be queue.Backend, cfg config.Config) {
 		Workers: cfg.Workers, Producers: cfg.Producers, Process: cfg.Process, Label: label,
 		Workload: workload(cfg), Lease: cfg.Lease, Batch: cfg.Batch,
 		Duration: cfg.Duration, Warmup: cfg.Warmup,
+		Chaos: cfg.Chaos, KillEvery: cfg.ChaosEvery,
 	}
 	sf, err := os.Create(filepath.Join(cfg.ResultsDir, fmt.Sprintf("sample-%d-%s.csv", cfg.Workers, label)))
 	if err != nil {
@@ -156,7 +139,7 @@ func runLoadrun(ctx context.Context, be queue.Backend, cfg config.Config) {
 	defer sf.Close()
 	spec.SampleCSV = sf
 
-	log.Printf("loadrun: workers=%d process=%s producers=%d duration=%s", cfg.Workers, label, cfg.Producers, cfg.Duration)
+	log.Printf("loadrun: workers=%d process=%s producers=%d duration=%s chaos=%t", cfg.Workers, label, cfg.Producers, cfg.Duration, cfg.Chaos)
 	res, err := loadgen.Run(ctx, be, spec)
 	if err != nil {
 		log.Fatalf("loadrun: %v", err)
@@ -201,6 +184,21 @@ func reapLoopM(ctx context.Context, be queue.Backend, m *loadgen.Metrics, cfg co
 			} else {
 				m.LeaseExpired.Add(int64(r))
 			}
+		}
+	}
+}
+
+// everySecond calls fn once per second until ctx is cancelled (shared by the
+// worker + loadgen rate loggers).
+func everySecond(ctx context.Context, fn func()) {
+	t := time.NewTicker(time.Second)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			fn()
 		}
 	}
 }

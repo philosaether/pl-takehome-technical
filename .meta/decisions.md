@@ -314,3 +314,22 @@ matplotlib graph, the 4 proofs (ordering-under-crash 3-of-10 trace + look-ahead
   overridable). Result: ours ~0.3–1.9 ms (flat), naive → 2,524 ms at 10⁷ =
   **1,364×**. Chart rendered (`results/lookahead.png`). matplotlib installed; pip
   symlinked onto PATH; `scripts/plot.py` made executable.
+
+## 2026-06-26 — M2 /review: 3 fixes + wire chaos
+
+Reviewed `feature/loadgen`. Applied + verified vs Docker PG:
+- **Wired the load-run chaos** (`PLQ_CHAOS`) — `RunChaosWorkers` existed but nothing
+  called it (dead code; design specified it). Now reachable via `loadrun`; confirmed
+  recovery-under-load (chaos kills → leases expire → reaper reclaims; `lease_exp=51`
+  in a smoke).
+- **`make load-test` clears `sweep.csv`/`sample-*` first** — reruns were appending to
+  stale data → `plot.py` would draw mixed/garbled lines.
+- **Extracted `everySecond` helper** — de-dup the worker/loadgen rate loggers.
+- **Dismissed (with reasoning):** `keyFor` fmt.Sprintf "improve now" — the DB
+  Enqueue round-trip (µs–ms) dwarfs two Sprintf (ns), so it can't cap a DB-backed
+  producer (would only matter in-memory). Heartbeat stop-race / Stats frequency /
+  time.Now hooks — all fine.
+- **Deferred (measure-first on the cloud sweep):** histogram single-mutex contention
+  could distort at 500k+ ops/s with many workers → shard only if throughput looks
+  capped. Alongside the M1 PG round-trips.
+- Reconciled `loadgen-and-proofs.md` (Implemented/Divergences/Deferred).

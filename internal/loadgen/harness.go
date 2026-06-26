@@ -22,6 +22,8 @@ type RunSpec struct {
 	Batch     int
 	Duration  time.Duration
 	Warmup    time.Duration // excluded from the throughput measurement
+	Chaos     bool          // periodically crash+respawn workers (recovery-under-load)
+	KillEvery time.Duration // chaos kill interval
 	SampleCSV io.Writer     // optional: per-second sample rows
 }
 
@@ -60,7 +62,11 @@ func Run(ctx context.Context, be queue.Backend, spec RunSpec) (Result, error) {
 			Process:  spec.Process,
 			Recorder: m,
 		}
-		_ = queue.NewPool(be, spec.Workers, wcfg).Run(runCtx)
+		if spec.Chaos {
+			RunChaosWorkers(runCtx, be, spec.Workers, wcfg, spec.KillEvery) // recovery-under-load
+		} else {
+			_ = queue.NewPool(be, spec.Workers, wcfg).Run(runCtx)
+		}
 	}()
 	go func() { defer wg.Done(); reaperLoop(runCtx, be, m, spec.Lease) }()
 

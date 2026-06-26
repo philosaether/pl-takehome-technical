@@ -49,6 +49,8 @@ type Config struct {
 	CostLo     int64
 	CostHi     int64
 	ResultsDir string
+	Chaos      bool          // PLQ_CHAOS: crash+respawn workers during the run
+	ChaosEvery time.Duration // PLQ_CHAOS_EVERY: chaos kill interval
 }
 
 // Load reads configuration from PLQ_* env vars, applying defaults.
@@ -85,7 +87,18 @@ func Load() Config {
 		CostLo:     atoi64("PLQ_COST_LO", 10),
 		CostHi:     atoi64("PLQ_COST_HI", 50),
 		ResultsDir: env("PLQ_RESULTS", "./results"),
+		Chaos:      boolenv("PLQ_CHAOS", false),
+		ChaosEvery: dur("PLQ_CHAOS_EVERY", 5*time.Second),
 	}
+}
+
+func boolenv(k string, def bool) bool {
+	if v, ok := os.LookupEnv(k); ok {
+		if b, err := strconv.ParseBool(v); err == nil {
+			return b
+		}
+	}
+	return def
 }
 
 func atof(k string, def float64) float64 {

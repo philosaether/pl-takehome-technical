@@ -52,6 +52,7 @@ down:
 ## (e.g. `make up` or a local container on :5433). Env-per-run: one process/point.
 load-test:
 	@mkdir -p results
+	@rm -f results/sweep.csv results/sample-*.csv   # start fresh — don't append to a prior run
 	@for n in $(WORKERS_SWEEP); do \
 	  echo ">>> workers=$$n process=zero"; \
 	  PLQ_BACKEND=postgres PLQ_POSTGRES_DSN="$(PLQ_POSTGRES_DSN)" \
