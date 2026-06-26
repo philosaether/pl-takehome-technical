@@ -20,24 +20,32 @@ except ImportError:
     sys.exit("matplotlib not installed — run: pip install matplotlib")
 
 
+def label_for(backend, proc):
+    """Series label. With a backend column (M3 head-to-head), prefix it so PG and
+    Valkey curves are distinguishable; without one (legacy single-backend runs),
+    fall back to just the process model."""
+    return f"{backend} process={proc}" if backend else f"process={proc}"
+
+
 def plot_throughput(results_dir):
     path = os.path.join(results_dir, "sweep.csv")
     if not os.path.exists(path):
         print(f"skip throughput: {path} not found")
         return
-    # group throughput by process model → [(workers, throughput, saturated)]
+    # group throughput by (backend, process) → [(workers, throughput, saturated)].
+    # The backend key overlays the PG vs Valkey head-to-head on one axis (M3).
     series = defaultdict(list)
     with open(path) as f:
         for row in csv.DictReader(f):
-            series[row["process"]].append(
+            series[(row.get("backend", ""), row["process"])].append(
                 (int(row["workers"]), float(row["throughput_acks_s"]), row["saturated"] == "true")
             )
     fig, ax = plt.subplots(figsize=(8, 5))
-    for proc, pts in sorted(series.items()):
+    for (backend, proc), pts in sorted(series.items()):
         pts.sort()
         xs = [w for w, _, _ in pts]
         ys = [t for _, t, _ in pts]
-        ax.plot(xs, ys, marker="o", label=f"process={proc}")
+        ax.plot(xs, ys, marker="o", label=label_for(backend, proc))
         # mark non-saturated points (the number may be load-gen-bound)
         for w, t, sat in pts:
             if not sat:
@@ -69,18 +77,18 @@ def plot_latency(results_dir):
             p99 = float(row["loop_p99_ms"])
             if p99 <= 0:  # log scale can't plot 0 (no samples at that point)
                 continue
-            series[row["process"]].append(
+            series[(row.get("backend", ""), row["process"])].append(
                 (int(row["workers"]), p99, row["saturated"] == "true")
             )
     if not series:
         print("skip latency: no loop_p99 samples")
         return
     fig, ax = plt.subplots(figsize=(8, 5))
-    for proc, pts in sorted(series.items()):
+    for (backend, proc), pts in sorted(series.items()):
         pts.sort()
         xs = [w for w, _, _ in pts]
         ys = [p for _, p, _ in pts]
-        ax.plot(xs, ys, marker="o", label=f"process={proc}")
+        ax.plot(xs, ys, marker="o", label=label_for(backend, proc))
         for w, p, sat in pts:
             if not sat:
                 ax.annotate("unsat", (w, p), fontsize=7, color="red")

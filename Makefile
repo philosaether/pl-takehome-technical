@@ -6,7 +6,11 @@ WORKERS_SWEEP ?= 1 10 100 1000
 # Add 2000 for LLM-call-scale (its 1-worker point is thin — see loadgen-and-proofs).
 PROCESS_MS ?= 2 20 200
 
-.PHONY: build test proofs fmt vet images up down load-test load-test-valkey graph cloud-up cloud-down clean
+PLQ_VALKEY_ADDR ?= localhost:6379
+
+.PHONY: build test proofs proofs-valkey fmt vet images up down up-valkey down-valkey \
+        load-test load-test-valkey head-to-head sweep-postgres sweep-valkey graph \
+        cloud-up cloud-down clean
 
 ## build: compile the default (in-memory) binary + typecheck all shared code
 build:
@@ -47,32 +51,79 @@ up:
 down:
 	docker compose down -v
 
-## load-test: the integrated local sweep (workers x {zero, cost@2ms}) against the
+## up-valkey / down-valkey: just the Valkey datastore (Path 2) for the sweep + proofs
+up-valkey:
+	docker compose up -d valkey
+
+down-valkey:
+	docker compose rm -sfv valkey
+
+## proofs-valkey: the correctness gate vs a live Valkey — conformance (8 scenarios)
+## + ordering-under-crash. Needs PLQ_VALKEY_ADDR reachable (`make up-valkey`).
+proofs-valkey:
+	PLQ_TEST_VALKEY=$(PLQ_VALKEY_ADDR) $(GO) test ./tests/conformance/...
+	PLQ_TEST_VALKEY=$(PLQ_VALKEY_ADDR) $(GO) test ./tests/proofs/...
+
+## load-test: the integrated local sweep (workers x {zero, cost@Nms}) against the
 ## postgres path, then render the graph. Needs a reachable PLQ_POSTGRES_DSN
 ## (e.g. `make up` or a local container on :5433). Env-per-run: one process/point.
 load-test:
 	@mkdir -p results
 	@rm -f results/sweep.csv results/sample-*.csv   # start fresh — don't append to a prior run
+	@$(MAKE) sweep-postgres
+	$(MAKE) graph
+
+## load-test-valkey: the same sweep against the Valkey path (single shard = the
+## baseline head-to-head point). Needs `make up-valkey` (or PLQ_VALKEY_ADDR set).
+load-test-valkey:
+	@mkdir -p results
+	@rm -f results/sweep.csv results/sample-*.csv
+	@$(MAKE) sweep-valkey
+	$(MAKE) graph
+
+## head-to-head: PG sweep + Valkey sweep into ONE results/sweep.csv, then graph the
+## overlaid throughput/latency comparison (M3 proof #4 — the decision gate). Needs
+## both datastores reachable (`make up up-valkey`).
+head-to-head:
+	@mkdir -p results
+	@rm -f results/sweep.csv results/sample-*.csv
+	@$(MAKE) sweep-postgres
+	@$(MAKE) sweep-valkey
+	$(MAKE) graph
+
+## sweep-postgres / sweep-valkey: one backend's worker x process sweep, APPENDING to
+## results/sweep.csv (no clear, no graph) — the reusable unit behind the targets above.
+sweep-postgres:
 	@for n in $(WORKERS_SWEEP); do \
-	  echo ">>> workers=$$n process=zero"; \
+	  echo ">>> postgres workers=$$n process=zero"; \
 	  PLQ_BACKEND=postgres PLQ_POSTGRES_DSN="$(PLQ_POSTGRES_DSN)" \
 	  PLQ_WORKERS=$$n PLQ_PROCESS=zero PLQ_PRODUCERS=64 PLQ_RESULTS=./results \
 	  $(GO) run -tags postgres ./cmd/plq loadrun ; \
 	  for ms in $(PROCESS_MS); do \
-	    echo ">>> workers=$$n process=$${ms}ms"; \
+	    echo ">>> postgres workers=$$n process=$${ms}ms"; \
 	    PLQ_BACKEND=postgres PLQ_POSTGRES_DSN="$(PLQ_POSTGRES_DSN)" \
 	    PLQ_WORKERS=$$n PLQ_PROCESS=cost PLQ_PROCESS_BASE=$${ms}ms PLQ_PRODUCERS=64 PLQ_RESULTS=./results \
 	    $(GO) run -tags postgres ./cmd/plq loadrun ; \
 	  done; \
 	done
-	$(MAKE) graph
+
+sweep-valkey:
+	@for n in $(WORKERS_SWEEP); do \
+	  echo ">>> valkey workers=$$n process=zero"; \
+	  PLQ_BACKEND=valkey PLQ_VALKEY_ADDR="$(PLQ_VALKEY_ADDR)" \
+	  PLQ_WORKERS=$$n PLQ_PROCESS=zero PLQ_PRODUCERS=64 PLQ_RESULTS=./results \
+	  $(GO) run -tags valkey ./cmd/plq loadrun ; \
+	  for ms in $(PROCESS_MS); do \
+	    echo ">>> valkey workers=$$n process=$${ms}ms"; \
+	    PLQ_BACKEND=valkey PLQ_VALKEY_ADDR="$(PLQ_VALKEY_ADDR)" \
+	    PLQ_WORKERS=$$n PLQ_PROCESS=cost PLQ_PROCESS_BASE=$${ms}ms PLQ_PRODUCERS=64 PLQ_RESULTS=./results \
+	    $(GO) run -tags valkey ./cmd/plq loadrun ; \
+	  done; \
+	done
 
 ## graph: render results/*.csv → PNGs (needs matplotlib: pip install matplotlib)
 graph:
 	python3 scripts/plot.py results
-
-load-test-valkey:
-	@echo "valkey head-to-head lands in M3 (see roadmap.md)."
 
 ## cloud-up / cloud-down: provision/tear down the canonical AWS boxes (M2 cloud half).
 ## cloud-down is `terraform destroy` — the spend control. GATED: only run when ready.

@@ -144,6 +144,7 @@ func runLoadrun(ctx context.Context, be queue.Backend, cfg config.Config) {
 	if err != nil {
 		log.Fatalf("loadrun: %v", err)
 	}
+	res.Backend = cfg.Backend // the head-to-head series key
 	appendSweepRow(cfg.ResultsDir, res)
 	log.Printf("result: throughput=%.0f acks/s loop_p99=%s claim_p99=%s saturated=%t backlog=[%d,%d] acked=%d lease_exp=%d",
 		res.Throughput, res.LoopP99, res.ClaimP99, res.Saturated, res.MinBacklog, res.MaxBacklog, res.Acked, res.LeaseExp)

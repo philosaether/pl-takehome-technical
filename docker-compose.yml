@@ -48,3 +48,29 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+
+  # Path 2 datastore (Valkey, M3). `make up-valkey` brings up just this; the load
+  # harness runs on the host (`make load-test-valkey`) against localhost:6379.
+  # Durability config = the self-hosted defaults from the accepted design
+  # (valkey-work-unit-queue.md §Durability & loss): ≤~1s loss window, never evict.
+  valkey:
+    image: valkey/valkey:8.1
+    command:
+      - valkey-server
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec               # ≤~1s loss window — the sane queue default (NOT WAITAOF: posture)
+      - --aof-use-rdb-preamble
+      - "yes"
+      - --maxmemory
+      - 512mb                  # keep well under host RAM (snapshot fork COW headroom)
+      - --maxmemory-policy
+      - noeviction             # a full instance REJECTS enqueues, never silently drops queued work
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
