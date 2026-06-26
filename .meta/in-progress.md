@@ -40,7 +40,7 @@ Current work state. Update constantly, delete items when done.
     `hash(workspace)%N` routing (not Cluster); `lease_token` on the hash; maintained
     `pending_tasks` for Stats; XAUTOCLAIM min-idle=0 (lease is the exclusivity gate);
     explicit `attempts` on the hash (oracle-exact, not PEL delivery_count).
-  - **MERGED to `main`** 2026-06-26 (`d1795c8`, --no-ff; reviewed). Not yet pushed.
+  - **MERGED + pushed to `main`** 2026-06-26 (`d1795c8`, --no-ff; reviewed).
 
 - **Next milestone — M3 head-to-head (own branch, 2026-06-27).** Reuses the M2 gated
   AWS sweep to produce the canonical PG-vs-Valkey curves (decision gate / proof #4:
