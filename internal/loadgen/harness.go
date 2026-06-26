@@ -16,6 +16,7 @@ type RunSpec struct {
 	Workers   int
 	Producers int
 	Process   queue.ProcessModel
+	Label     string // process label for the CSV/filename (e.g. "zero", "20ms"); distinguishes cost points
 	Workload  Workload
 	Lease     time.Duration
 	Batch     int
@@ -90,8 +91,12 @@ func reaperLoop(ctx context.Context, be queue.Backend, m *Metrics, lease time.Du
 
 func sample(ctx context.Context, be queue.Backend, m *Metrics, spec RunSpec) Result {
 	stater, _ := be.(queue.Stater)
+	procLabel := spec.Label
+	if procLabel == "" {
+		procLabel = spec.Process.Kind
+	}
 	res := Result{
-		Workers: spec.Workers, Process: spec.Process.Kind,
+		Workers: spec.Workers, Process: procLabel,
 		MinBacklog: -1, MaxBacklog: -1,
 	}
 	if spec.SampleCSV != nil {

@@ -64,6 +64,15 @@ func main() {
 	}
 }
 
+// processLabel names a sweep point's work model: "zero", or the per-task latency
+// ("2ms"/"20ms"/"200ms") so cost points are distinct rows/files (not all "cost").
+func processLabel(p queue.ProcessModel) string {
+	if p.Kind == "zero" || p.Kind == "" {
+		return "zero"
+	}
+	return fmt.Sprintf("%dms", p.Base.Milliseconds())
+}
+
 func workload(cfg config.Config) loadgen.Workload {
 	return loadgen.Workload{
 		Seed: cfg.Seed, WorkingSet: cfg.WorkingSet, ZipfS: cfg.ZipfS, BirthRate: cfg.BirthRate,
@@ -134,19 +143,20 @@ func runLoadrun(ctx context.Context, be queue.Backend, cfg config.Config) {
 			log.Fatalf("reset: %v", err)
 		}
 	}
+	label := processLabel(cfg.Process)
 	spec := loadgen.RunSpec{
-		Workers: cfg.Workers, Producers: cfg.Producers, Process: cfg.Process,
+		Workers: cfg.Workers, Producers: cfg.Producers, Process: cfg.Process, Label: label,
 		Workload: workload(cfg), Lease: cfg.Lease, Batch: cfg.Batch,
 		Duration: cfg.Duration, Warmup: cfg.Warmup,
 	}
-	sf, err := os.Create(filepath.Join(cfg.ResultsDir, fmt.Sprintf("sample-%d-%s.csv", cfg.Workers, cfg.Process.Kind)))
+	sf, err := os.Create(filepath.Join(cfg.ResultsDir, fmt.Sprintf("sample-%d-%s.csv", cfg.Workers, label)))
 	if err != nil {
 		log.Fatalf("sample file: %v", err)
 	}
 	defer sf.Close()
 	spec.SampleCSV = sf
 
-	log.Printf("loadrun: workers=%d process=%s producers=%d duration=%s", cfg.Workers, cfg.Process.Kind, cfg.Producers, cfg.Duration)
+	log.Printf("loadrun: workers=%d process=%s producers=%d duration=%s", cfg.Workers, label, cfg.Producers, cfg.Duration)
 	res, err := loadgen.Run(ctx, be, spec)
 	if err != nil {
 		log.Fatalf("loadrun: %v", err)

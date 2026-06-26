@@ -2,6 +2,9 @@ GO ?= go
 # Local sweep target (override for the cloud boxes):
 PLQ_POSTGRES_DSN ?= postgres://plq:plq@localhost:5433/plq?sslmode=disable
 WORKERS_SWEEP ?= 1 10 100 1000
+# Per-task simulated work (ms) for the cost runs; `zero` is always swept too.
+# Add 2000 for LLM-call-scale (its 1-worker point is thin — see loadgen-and-proofs).
+PROCESS_MS ?= 2 20 200
 
 .PHONY: build test proofs fmt vet images up down load-test load-test-valkey graph cloud-up cloud-down clean
 
@@ -49,12 +52,18 @@ down:
 ## (e.g. `make up` or a local container on :5433). Env-per-run: one process/point.
 load-test:
 	@mkdir -p results
-	@for p in zero cost; do for n in $(WORKERS_SWEEP); do \
-	  echo ">>> workers=$$n process=$$p"; \
+	@for n in $(WORKERS_SWEEP); do \
+	  echo ">>> workers=$$n process=zero"; \
 	  PLQ_BACKEND=postgres PLQ_POSTGRES_DSN="$(PLQ_POSTGRES_DSN)" \
-	  PLQ_WORKERS=$$n PLQ_PROCESS=$$p PLQ_PROCESS_BASE=2ms PLQ_PRODUCERS=64 PLQ_RESULTS=./results \
+	  PLQ_WORKERS=$$n PLQ_PROCESS=zero PLQ_PRODUCERS=64 PLQ_RESULTS=./results \
 	  $(GO) run -tags postgres ./cmd/plq loadrun ; \
-	done; done
+	  for ms in $(PROCESS_MS); do \
+	    echo ">>> workers=$$n process=$${ms}ms"; \
+	    PLQ_BACKEND=postgres PLQ_POSTGRES_DSN="$(PLQ_POSTGRES_DSN)" \
+	    PLQ_WORKERS=$$n PLQ_PROCESS=cost PLQ_PROCESS_BASE=$${ms}ms PLQ_PRODUCERS=64 PLQ_RESULTS=./results \
+	    $(GO) run -tags postgres ./cmd/plq loadrun ; \
+	  done; \
+	done
 	$(MAKE) graph
 
 ## graph: render results/*.csv → PNGs (needs matplotlib: pip install matplotlib)

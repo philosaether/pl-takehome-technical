@@ -213,11 +213,14 @@ talking-point). If they don't move the plateau, we say so — measured, not assu
   only if TF setup runs long.)* PG box runs the stock `postgres` container via
   user-data; RDS `db.m5.large` is the more-managed option, noted not required.
 - **Matrix (OQ5): full matrix at 60 s/point.** `workers {1,10,100,1000} ×
-  process {zero, cost@2ms}` = 8 points × 60 s ≈ 8 min of work. Sanity-check the
-  first point works, then let it run. **Extend** to richer cost points
-  (20 ms / 200 ms) if the cutover curve isn't interesting enough — uptime is so
-  cheap there's no reason not to. (200 ms × 60 s is still thin on samples; the
-  metrics report sample-count so a thin point reads as thin.)
+  process {zero, 2ms, 20ms, 200ms}` = **16 points × 60 s ≈ 16 min** (~$1). The
+  process axis spans the cutover: `zero`/`2ms` saturate PG (the curve **plateaus** —
+  the defended ceiling); `20ms`/`200ms` are worker-bound within 1000 workers (curve
+  rises **linearly**, PG idle — "at this latency you don't need Valkey, just add
+  workers"). `2000ms` (LLM-call scale) is an optional flourish — `PROCESS_MS="2 20
+  200 2000"` — but it adds no new regime and its 1-worker point is ~27 samples
+  (thin; `loop_samples` makes that visible). Sample filenames + the `process` CSV
+  column are labeled by per-task latency (`zero`/`2ms`/…) so cost points are distinct.
 
 ---
 
