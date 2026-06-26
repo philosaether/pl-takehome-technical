@@ -2,6 +2,9 @@
 Status: accepted
 Date: 2026-06-26
 Accepted: 2026-06-26
+Implemented: 2026-06-26 (feature/scaffold)
+Divergences: in-memory backend built as a full working oracle (design said "no-op/in-memory") — anticipated in the body; added a WorkerConfig.OnProcess hook (not in design) as the proof seam; ack-keep renews the lease (review fix B1).
+Deferred: postgres driver (M1), valkey driver (M3), real loadgen+metrics & proofs/ (M2) — all as designed.
 Related: postgres-work-unit-queue.md (M1 implements this), valkey-work-unit-queue.md (M3 implements this)
 Roadmap: ../roadmap.md (M0)
 ---
