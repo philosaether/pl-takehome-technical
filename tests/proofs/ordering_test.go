@@ -27,10 +27,7 @@ func TestOrderingUnderCrash(t *testing.T) {
 		var log []int64
 
 		// Worker A: short lease, processes & acks t0..t2, then crashes.
-		ca, err := be.Claim(ctx, "A", time.Second)
-		if err != nil || ca == nil {
-			t.Fatalf("A claim: %v / %v", ca, err)
-		}
+		ca := claimRetry(t, be, "A", time.Second)
 		batch, err := be.Drain(ctx, ca, n)
 		if err != nil {
 			t.Fatalf("A drain: %v", err)
@@ -53,10 +50,7 @@ func TestOrderingUnderCrash(t *testing.T) {
 		}
 
 		// Worker B drains the rest, in order, starting at t3.
-		cb, err := be.Claim(ctx, "B", time.Minute)
-		if err != nil || cb == nil {
-			t.Fatalf("B claim: %v / %v", cb, err)
-		}
+		cb := claimRetry(t, be, "B", time.Minute)
 		for {
 			batch, err := be.Drain(ctx, cb, n)
 			if err != nil {

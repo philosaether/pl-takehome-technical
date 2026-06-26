@@ -13,6 +13,27 @@ import (
 
 var ctx = context.Background()
 
+// claimRetry models how a real worker claims: poll until a unit comes back. A
+// single Claim can legitimately return nil transiently (e.g. SKIP LOCKED stepping
+// over a row another txn briefly holds); the worker loop retries with backoff, so
+// the test must too — asserting the *first* claim succeeds is stricter than the
+// contract and makes the proof flaky.
+func claimRetry(t *testing.T, be queue.Backend, worker queue.WorkerID, lease time.Duration) *queue.ClaimedUnit {
+	t.Helper()
+	for i := 0; i < 100; i++ {
+		c, err := be.Claim(ctx, worker, lease)
+		if err != nil {
+			t.Fatalf("%s claim: %v", worker, err)
+		}
+		if c != nil {
+			return c
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("%s: no unit claimable after retries", worker)
+	return nil
+}
+
 // forEachBackend runs fn against the in-memory oracle (always) and Postgres (when
 // PLQ_TEST_POSTGRES is set), each freshly reset.
 func forEachBackend(t *testing.T, threshold int, maxWait time.Duration, fn func(t *testing.T, be queue.Backend)) {

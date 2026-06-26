@@ -1,10 +1,15 @@
-package proofs_test
+// Package bench holds scaling benchmarks (not correctness proofs) — kept in their
+// own test binary so a heavy bench never shares a process/DB with a correctness
+// proof. Postgres-only, gated by PLQ_TEST_POSTGRES.
+package bench_test
 
 import (
+	"context"
 	"fmt"
 	"math/rand"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -15,24 +20,32 @@ import (
 	"github.com/philosaether/pl-takehome-technical/internal/postgres"
 )
 
+var ctx = context.Background()
+
 // TestLookaheadCost is the headline bench: our maintained-aggregate look-ahead
 // (an index lookup over work_units, ~flat as task count grows) vs the naive
 // per-poll SUM…GROUP BY over tasks (Honcho's current code — scans, grows). Seeds
 // up to 10^6 tasks via COPY (we're benching CLAIM, not enqueue). Postgres-only.
 //
-//	PLQ_TEST_POSTGRES=postgres://… go test ./proofs/ -run Lookahead -v
+//	PLQ_TEST_POSTGRES=postgres://… go test ./tests/proofs/ -run Lookahead -v
+//
+// Units SCALE with task count (~100 tasks/unit, the brief's 10^4–10^5-unit regime
+// at 10^6 tasks) — the honest workload. Ours still stays ~flat because the
+// look-ahead is an indexed ORDER BY … LIMIT 1 over work_units (reads the leftmost
+// entry, not all units); naive scans every task. Size curve is configurable via
+// PLQ_BENCH_SIZES (csv); default is 1/3/7 per decade, 10^4 → 10^7 (~a few min).
 func TestLookaheadCost(t *testing.T) {
 	dsn := os.Getenv("PLQ_TEST_POSTGRES")
 	if dsn == "" {
 		t.Skip("set PLQ_TEST_POSTGRES to run the look-ahead bench")
 	}
 	const (
-		nUnits = 10000 // FIXED: so ours stays flat while tasks/unit (and naive's scan) grow
-		T      = 50    // threshold; ~half the units eligible at the larger sizes
-		maxWMs = 60000
-		ktimes = 5
+		tasksPerUnit = 100 // units scale: nUnits = size / tasksPerUnit
+		T            = 50  // threshold; with 100 tasks/unit (cost 1) every unit is eligible
+		maxWMs       = 60000
+		ktimes       = 5
 	)
-	sizes := []int{100_000, 1_000_000}
+	sizes := benchSizes()
 
 	if be, err := postgres.New(postgres.Options{DSN: dsn, DefaultThreshold: T, DefaultMaxWait: time.Minute, MaxAttempts: 3}); err != nil {
 		t.Fatalf("schema: %v", err)
@@ -52,10 +65,10 @@ ORDER BY flush_deadline NULLS LAST, ws,sess,peer LIMIT 1`
 GROUP BY ws,sess,peer HAVING sum(cost) >= 50
 ORDER BY ws,sess,peer LIMIT 1`
 
-	if err := os.MkdirAll("../results", 0o755); err != nil {
+	if err := os.MkdirAll("../../results", 0o755); err != nil {
 		t.Fatalf("results dir: %v", err)
 	}
-	csv, err := os.Create(filepath.Join("..", "results", "lookahead.csv"))
+	csv, err := os.Create(filepath.Join("..", "..", "results", "lookahead.csv"))
 	if err != nil {
 		t.Fatalf("csv: %v", err)
 	}
@@ -64,6 +77,10 @@ ORDER BY ws,sess,peer LIMIT 1`
 
 	var lastOurs, lastNaive float64
 	for _, size := range sizes {
+		nUnits := size / tasksPerUnit
+		if nUnits < 100 {
+			nUnits = 100
+		}
 		seedBench(t, pool, size, nUnits, T, maxWMs)
 
 		ours := minQueryMs(t, pool, oursSQL, ktimes)
@@ -145,6 +162,28 @@ func seedBench(t *testing.T, pool *pgxpool.Pool, size, nUnits, threshold, maxWMs
 }
 
 func uname(u int32) string { return fmt.Sprintf("u-%d", u) }
+
+// benchSizes returns the task-count curve: PLQ_BENCH_SIZES (csv) or the default
+// 1/3/7-per-decade from 10^4 to 10^7.
+func benchSizes() []int {
+	if v := os.Getenv("PLQ_BENCH_SIZES"); v != "" {
+		var out []int
+		for _, p := range strings.Split(v, ",") {
+			if n, err := strconv.Atoi(strings.TrimSpace(p)); err == nil && n > 0 {
+				out = append(out, n)
+			}
+		}
+		if len(out) > 0 {
+			return out
+		}
+	}
+	return []int{
+		10_000, 30_000, 70_000,
+		100_000, 300_000, 700_000,
+		1_000_000, 3_000_000, 7_000_000,
+		10_000_000,
+	}
+}
 
 func minQueryMs(t *testing.T, pool *pgxpool.Pool, sql string, k int) float64 {
 	t.Helper()

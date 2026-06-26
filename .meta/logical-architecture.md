@@ -38,11 +38,17 @@ That identity is what makes the head-to-head a fair fight.
 | `internal/queue` | The contract: `Backend` interface, core types, the shared worker loop. | **real** |
 | `internal/memory` | In-memory `Backend` — dev, CI typecheck, **correctness oracle**. | **real** |
 | `internal/config` | Volatility-split tunables from `PLQ_*` env; projects `WorkerConfig`. | **real** |
-| `internal/loadgen` | Producers + metrics. M0 ships a placeholder workload. | stub → M2 |
-| `internal/postgres` | Path 1 driver. Embeds `queue.Unimplemented`; `New` reports the stub. | stub → M1 |
+| `internal/loadgen` | Zipfian-churn producers, the `loadrun` harness, metrics (`queue.Recorder`), chaos. | **real** |
+| `internal/postgres` | Path 1 driver — all 8 methods + `Stater`/`Resetter`. | **real** |
 | `internal/valkey` | Path 2 driver (Streams+ZSET+Lua). Same stub shape. | stub → M3 |
-| `cmd/plq` | CLI (`worker\|loadgen\|reap`) + build-tagged `newBackend`. | **real** |
-| `proofs` | M2 deterministic proofs. M0 smoke proofs live in `queue/worker_test.go`. | stub → M2 |
+| `cmd/plq` | CLI (`worker\|loadgen\|loadrun\|reap\|reset`) + build-tagged `newBackend`. | **real** |
+| `tests/conformance` | The contract suite (8 scenarios) run vs memory + PG. | **real** |
+| `tests/proofs` | Ordering-under-crash (correctness) + the `claimRetry` harness. | **real** |
+| `tests/bench` | Look-ahead scaling bench (its own binary; PG-gated). | **real** |
+
+Tests: unit tests live next to their code (`internal/queue/worker_test.go`). The
+**cross-backend integration suites** live under `tests/` — and each runs in its own
+`go test` invocation (`make proofs`) so they never hit the shared DB concurrently.
 
 ## Key files
 

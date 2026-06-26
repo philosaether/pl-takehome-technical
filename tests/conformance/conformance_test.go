@@ -1,4 +1,4 @@
-package postgres_test
+package conformance_test
 
 import (
 	"context"
@@ -8,16 +8,28 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/philosaether/pl-takehome-technical/internal/conformance"
+	"github.com/philosaether/pl-takehome-technical/internal/memory"
 	"github.com/philosaether/pl-takehome-technical/internal/postgres"
 	"github.com/philosaether/pl-takehome-technical/internal/queue"
+	"github.com/philosaether/pl-takehome-technical/tests/conformance"
 )
+
+// The in-memory backend is the reference: it must pass the full conformance suite.
+func TestMemory(t *testing.T) {
+	conformance.Run(t, func(cfg conformance.Config) queue.Backend {
+		return memory.New(memory.Options{
+			DefaultThreshold: int64(cfg.Threshold),
+			DefaultMaxWait:   cfg.MaxWait,
+			MaxAttempts:      cfg.MaxAttempts,
+		})
+	})
+}
 
 // The Postgres driver must produce identical observable behavior to the oracle.
 // Gated behind PLQ_TEST_POSTGRES so the default `go test` stays hermetic.
 //
-//	PLQ_TEST_POSTGRES=postgres://plq:plq@localhost:5432/plq?sslmode=disable go test ./internal/postgres/
-func TestConformance(t *testing.T) {
+//	PLQ_TEST_POSTGRES=postgres://plq:plq@localhost:5433/plq?sslmode=disable go test ./tests/conformance/
+func TestPostgres(t *testing.T) {
 	dsn := os.Getenv("PLQ_TEST_POSTGRES")
 	if dsn == "" {
 		t.Skip("set PLQ_TEST_POSTGRES to run the Postgres conformance suite")

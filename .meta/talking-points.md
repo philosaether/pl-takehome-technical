@@ -12,6 +12,26 @@ Append-forward. Don't prune — selection happens at M4.
 
 ---
 
+## The maintained aggregate: ~flat look-ahead vs a naive scan that hits 2.5s at 10⁷
+
+Measured (single Postgres, two queries, units scaling with task count to match the
+brief's regime): our look-ahead — an indexed `ORDER BY flush_deadline LIMIT 1` over
+the maintained `work_units.pending_cost` aggregate — stays **~0.3–1.9 ms** from 10⁴
+to **10⁷** pending tasks. The naive per-poll `SUM(cost) … GROUP BY … HAVING` (Honcho's
+current code) climbs to **2,524 ms** at 10⁷ — a **1,364× speedup**, three orders of
+magnitude on the log-log plot. This *is* the take-home's thesis, and it's the one
+chart that makes the case on its own (`results/lookahead.png`).
+
+## A flaky test that's actually the production contract in disguise
+
+Co-locating the integration suites surfaced an intermittent `Claim` → `nil` under
+`FOR UPDATE SKIP LOCKED` after heavy prior DB churn. The fix wasn't to paper over
+it — it was to make the *proof* claim the way a real *worker* claims: poll with
+backoff until a unit comes back. A single nil-claim is expected and handled by the
+worker loop; asserting the first claim succeeds instantly was stricter than the
+contract. Nice "our tests model the real system" point — and a reminder that
+`SKIP LOCKED` trades a strict-first-claim guarantee for contention-free parallelism.
+
 ## Flush is an age-cap on the *oldest task*, not a sticky unit flag
 
 When a unit flush-promotes (its oldest task aged past `max_wait`) and a worker

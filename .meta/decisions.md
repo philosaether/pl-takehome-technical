@@ -294,3 +294,23 @@ matplotlib graph, the 4 proofs (ordering-under-crash 3-of-10 trace + look-ahead
 - **Gated step:** `terraform apply` + the canonical EC2 sweep (the only spend +
   irreversible action) — Phil kicks it off; local half is fully verifiable on the
   laptop + Docker PG first.
+
+## 2026-06-26 — M2 follow-ups: test restructure + lookahead expansion
+
+- **Test layout → `tests/`.** Moved the cross-backend suites out of `internal/`:
+  `tests/conformance` (one runner, both backends — replaces the two scattered
+  `*_test.go` in memory/ + postgres/), `tests/proofs` (ordering + `claimRetry`
+  harness), `tests/bench` (the look-ahead scaling bench, its own binary). Unit
+  tests stay next to code (`internal/queue/worker_test.go`). `make proofs` runs each
+  integration package in its **own serial `go test` invocation** so they never hit
+  the shared DB concurrently.
+- **Flaky-test fix = the production contract.** Surfaced an intermittent
+  `Claim → nil` under `SKIP LOCKED` after heavy churn. Fixed by claiming with retry
+  in the proof (mirrors the worker loop's claim-backoff-retry) — not a masked bug;
+  a nil-claim is expected and the loop handles it. Verified flake-free across 4×.
+  → `talking-points.md`.
+- **Look-ahead curve: units now SCALE** with task count (honest — the brief's
+  10⁴–10⁵-unit regime), 1/3/7-per-decade from 10⁴→10⁷ (`PLQ_BENCH_SIZES`
+  overridable). Result: ours ~0.3–1.9 ms (flat), naive → 2,524 ms at 10⁷ =
+  **1,364×**. Chart rendered (`results/lookahead.png`). matplotlib installed; pip
+  symlinked onto PATH; `scripts/plot.py` made executable.
