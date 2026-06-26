@@ -6,25 +6,49 @@ Current work state. Update constantly, delete items when done.
 
 ## Active
 
-- **M2 loadgen + proofs — LOCAL HALF BUILT + verified** on `feature/loadgen`
-  (design accepted, `designs/loadgen-and-proofs.md`). Done: Zipfian-churn producers,
-  the integrated `loadrun` harness (producers+workers+reaper+sampler, saturation
-  self-certified via the `Stater` backlog query), shared `metrics.go` (throughput/
-  claim-p99/loop-p99/backlog) wired into `worker`/`loadgen`/`loadrun`, goroutine
-  chaos, the ordering-under-crash proof (3-of-10, memory+PG), the **look-ahead
-  bench** (`CopyFrom` seed, EXPLAIN, vs naive `SUM…GROUP BY` — 154× at 10⁶ measured
-  locally), `scripts/plot.py`, Makefile sweep, and the **Terraform** harness
-  (validated, not applied).
-  - **GATED next step:** `make cloud-up` (terraform apply) + the canonical AWS
-    sweep, then `make cloud-down`. The only spend/irreversible action — kick off
-    when ready. Everything else is verified on the laptop + Docker PG.
-  - **Deferred PG efficiency items** (Drain 2→1, Enqueue tenant-cache miss) get
-    measured in the canonical sweep — optimize only if they compound (talking-point).
+- **M2 loadgen + proofs — LOCAL HALF DONE, reviewed, merged to `main`**
+  (`feature/loadgen`, `designs/loadgen-and-proofs.md` accepted+reconciled). Shipped:
+  Zipfian-churn producers, the `loadrun` harness (producers+workers+reaper+sampler,
+  saturation self-certified via `Stater` backlog), shared `metrics.go` wired into
+  `worker`/`loadgen`/`loadrun`, **wired chaos** (`PLQ_CHAOS`, recovery verified),
+  ordering-under-crash proof (3-of-10, memory+PG), the **look-ahead bench**
+  (scaling units, 1e4→1e7 = **1,364×** at 10⁷), three charts (throughput, latency,
+  look-ahead), Makefile sweep (workers × {zero,2ms,20ms,200ms}), and the Terraform
+  harness (validated, **not applied**).
+  - **GATED — the next action:** `make cloud-up` (terraform apply) → the canonical
+    AWS sweep (3 boxes: worker alone / PG / producer; export `TF_VAR_ssh_public_key`
+    + `TF_VAR_ssh_cidr` first) → `make cloud-down`. The only spend/irreversible step;
+    ~$1 if torn down promptly. Produces the canonical throughput+latency curves.
+  - **Measure-first on that sweep:** the deferred PG round-trips (Drain 2→1, Enqueue
+    tenant-cache miss) + histogram-mutex contention — optimize only if they compound
+    (before/after = talking-point).
 
-- **M1 Postgres driver — DONE, reviewed, merged to `main`** (`feature/postgres-queue`).
-  All 8 `queue.Backend` methods over Postgres; conformance 8/8 vs live postgres:16;
-  oracle aligned to per-head flush. Designs `postgres-driver.md` (accepted+reconciled).
-  - `pgx/v5` added (go directive → 1.25). Interesting decisions → `talking-points.md`.
+- **M3 Valkey driver — LOCAL DONE, verified** on `feature/valkey`
+  (`designs/valkey-driver.md` accepted + reconciled, mirrors the M1 build-design shape).
+  Shipped: `internal/valkey` — all 8 `queue.Backend` methods over Streams+ZSET+Hash+Lua
+  via `rueidis` (`scripts.go` = 7 embedded Lua scripts), `Stater` (maintained
+  `pending_tasks`) + `Resetter` (FLUSHDB), N-shard routing by `hash(workspace)`, the
+  `lease_token` ABA handle, the stateless PEL-scan seq→ID ack. **Conformance 8/8 +
+  ordering-under-crash green vs live valkey/valkey:8.1**; `loadrun` smoke ~12–14k
+  acks/s, loop-p99 5ms; 2-shard routing verified (keys split 252/254). Wired:
+  docker-compose `valkey` service (durability config), Makefile `up-valkey` /
+  `load-test-valkey` / `head-to-head` / `proofs-valkey` + factored `sweep-postgres`/
+  `sweep-valkey`, `backend` column on `sweep.csv` + plot.py PG-vs-Valkey overlay,
+  `valkey.Dockerfile` go.sum fix.
+  - **Locked decisions (built):** own `next_seq` (HINCRBY−1, 0-based == M1) stored as a
+    stream field + stateless PEL-scan ack; N independent standalone primaries +
+    `hash(workspace)%N` routing (not Cluster); `lease_token` on the hash; maintained
+    `pending_tasks` for Stats; XAUTOCLAIM min-idle=0 (lease is the exclusivity gate);
+    explicit `attempts` on the hash (oracle-exact, not PEL delivery_count).
+  - **GATED — the canonical head-to-head numbers:** reuses the M2 gated AWS sweep
+    (`make head-to-head` runs PG + Valkey 1/2/4-shard into one `sweep.csv` → overlaid
+    charts). The decision gate (proof #4): PG plateau vs Valkey scaling + loop-p99.
+  - **Next:** `/review` `feature/valkey`, then merge to `main`. (M-PR Honcho fork PR,
+    M4 writeup still ahead.)
+
+- **M1 Postgres driver — DONE, merged to `main`.** All 8 methods; conformance 8/8;
+  per-head flush. `postgres-driver.md` accepted+reconciled. (`talking-points.md`
+  holds the curated highlights.)
 
 - **M0 scaffold — DONE, reviewed, merged to `main`** (`feature/scaffold`,
   `designs/scaffold.md` accepted + reconciled). The apples-to-apples contract is

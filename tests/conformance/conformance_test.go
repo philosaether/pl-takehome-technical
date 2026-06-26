@@ -11,6 +11,7 @@ import (
 	"github.com/philosaether/pl-takehome-technical/internal/memory"
 	"github.com/philosaether/pl-takehome-technical/internal/postgres"
 	"github.com/philosaether/pl-takehome-technical/internal/queue"
+	"github.com/philosaether/pl-takehome-technical/internal/valkey"
 	"github.com/philosaether/pl-takehome-technical/tests/conformance"
 )
 
@@ -60,6 +61,33 @@ func TestPostgres(t *testing.T) {
 		})
 		if err != nil {
 			t.Fatalf("new: %v", err)
+		}
+		return be
+	})
+}
+
+// The Valkey driver must produce identical observable behavior to the oracle, at
+// N=1 (single primary = the architecture's single-instance design). Gated behind
+// PLQ_TEST_VALKEY so the default `go test` stays hermetic.
+//
+//	PLQ_TEST_VALKEY=localhost:6379 go test ./tests/conformance/
+func TestValkey(t *testing.T) {
+	addr := os.Getenv("PLQ_TEST_VALKEY")
+	if addr == "" {
+		t.Skip("set PLQ_TEST_VALKEY to run the Valkey conformance suite")
+	}
+	conformance.Run(t, func(cfg conformance.Config) queue.Backend {
+		be, err := valkey.New(valkey.Options{
+			Addrs:            []string{addr},
+			DefaultThreshold: int64(cfg.Threshold),
+			DefaultMaxWait:   cfg.MaxWait,
+			MaxAttempts:      cfg.MaxAttempts,
+		})
+		if err != nil {
+			t.Fatalf("new: %v", err)
+		}
+		if err := be.(queue.Resetter).Reset(context.Background()); err != nil { // FLUSHDB between scenarios
+			t.Fatalf("reset: %v", err)
 		}
 		return be
 	})

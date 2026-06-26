@@ -40,9 +40,9 @@ That identity is what makes the head-to-head a fair fight.
 | `internal/config` | Volatility-split tunables from `PLQ_*` env; projects `WorkerConfig`. | **real** |
 | `internal/loadgen` | Zipfian-churn producers, the `loadrun` harness, metrics (`queue.Recorder`), chaos. | **real** |
 | `internal/postgres` | Path 1 driver — all 8 methods + `Stater`/`Resetter`. | **real** |
-| `internal/valkey` | Path 2 driver (Streams+ZSET+Lua). Same stub shape. | stub → M3 |
+| `internal/valkey` | Path 2 driver — Streams+ZSET+Hash+Lua via rueidis; all 8 methods + `Stater`/`Resetter`; N-shard routing by workspace. | **real** |
 | `cmd/plq` | CLI (`worker\|loadgen\|loadrun\|reap\|reset`) + build-tagged `newBackend`. | **real** |
-| `tests/conformance` | The contract suite (8 scenarios) run vs memory + PG. | **real** |
+| `tests/conformance` | The contract suite (8 scenarios) run vs memory + PG + Valkey. | **real** |
 | `tests/proofs` | Ordering-under-crash (correctness) + the `claimRetry` harness. | **real** |
 | `tests/bench` | Look-ahead scaling bench (its own binary; PG-gated). | **real** |
 

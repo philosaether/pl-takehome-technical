@@ -9,6 +9,7 @@ import (
 	"github.com/philosaether/pl-takehome-technical/internal/memory"
 	"github.com/philosaether/pl-takehome-technical/internal/postgres"
 	"github.com/philosaether/pl-takehome-technical/internal/queue"
+	"github.com/philosaether/pl-takehome-technical/internal/valkey"
 )
 
 var ctx = context.Background()
@@ -40,21 +41,36 @@ func forEachBackend(t *testing.T, threshold int, maxWait time.Duration, fn func(
 	t.Run("memory", func(t *testing.T) {
 		fn(t, memory.New(memory.Options{DefaultThreshold: int64(threshold), DefaultMaxWait: maxWait, MaxAttempts: 3}))
 	})
-	dsn := os.Getenv("PLQ_TEST_POSTGRES")
-	if dsn == "" {
+	if dsn := os.Getenv("PLQ_TEST_POSTGRES"); dsn == "" {
 		t.Log("PLQ_TEST_POSTGRES unset — skipping postgres backend")
-		return
-	}
-	t.Run("postgres", func(t *testing.T) {
-		be, err := postgres.New(postgres.Options{DSN: dsn, DefaultThreshold: threshold, DefaultMaxWait: maxWait, MaxAttempts: 3})
-		if err != nil {
-			t.Fatalf("postgres: %v", err)
-		}
-		if r, ok := be.(queue.Resetter); ok {
-			if err := r.Reset(ctx); err != nil {
-				t.Fatalf("reset: %v", err)
+	} else {
+		t.Run("postgres", func(t *testing.T) {
+			be, err := postgres.New(postgres.Options{DSN: dsn, DefaultThreshold: threshold, DefaultMaxWait: maxWait, MaxAttempts: 3})
+			if err != nil {
+				t.Fatalf("postgres: %v", err)
 			}
+			resetAndRun(t, be, fn)
+		})
+	}
+
+	if addr := os.Getenv("PLQ_TEST_VALKEY"); addr == "" {
+		t.Log("PLQ_TEST_VALKEY unset — skipping valkey backend")
+	} else {
+		t.Run("valkey", func(t *testing.T) {
+			be, err := valkey.New(valkey.Options{Addrs: []string{addr}, DefaultThreshold: int64(threshold), DefaultMaxWait: maxWait, MaxAttempts: 3})
+			if err != nil {
+				t.Fatalf("valkey: %v", err)
+			}
+			resetAndRun(t, be, fn)
+		})
+	}
+}
+
+func resetAndRun(t *testing.T, be queue.Backend, fn func(t *testing.T, be queue.Backend)) {
+	if r, ok := be.(queue.Resetter); ok {
+		if err := r.Reset(ctx); err != nil {
+			t.Fatalf("reset: %v", err)
 		}
-		fn(t, be)
-	})
+	}
+	fn(t, be)
 }
