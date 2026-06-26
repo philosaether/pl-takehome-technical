@@ -1,0 +1,50 @@
+# Local dev topology for the Postgres path (Path 1). Functional from M1, when the
+# postgres driver lands; in M0 the worker/loadgen containers build and start but
+# report "not implemented (M1)". The Valkey path mirrors this in M3.
+#
+#   store (stock postgres)  +  worker (plq:postgres, WORKERS=N)  +  loadgen (plq:postgres)
+#
+# Worker-count sweep = re-run with PLQ_WORKERS set (env-per-run, comparable).
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_PASSWORD: plq
+      POSTGRES_USER: plq
+      POSTGRES_DB: plq
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U plq"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+  worker:
+    build:
+      context: .
+      dockerfile: deploy/postgres.Dockerfile
+    command: ["worker"]
+    environment:
+      PLQ_BACKEND: postgres
+      PLQ_POSTGRES_DSN: postgres://plq:plq@postgres:5432/plq?sslmode=disable
+      PLQ_WORKERS: "10"
+      PLQ_PROCESS: zero
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  loadgen:
+    build:
+      context: .
+      dockerfile: deploy/postgres.Dockerfile
+    command: ["loadgen"]
+    environment:
+      PLQ_BACKEND: postgres
+      PLQ_POSTGRES_DSN: postgres://plq:plq@postgres:5432/plq?sslmode=disable
+      PLQ_LOAD_KEYS: "100"
+      PLQ_LOAD_TASKS: "10000"
+    depends_on:
+      postgres:
+        condition: service_healthy

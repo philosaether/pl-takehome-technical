@@ -203,3 +203,29 @@ amended into both design docs.
 shared-queue isolation model + the two-grain fairness finding; the Valkey A1 also
 narrows the shard key from `wu_key` → `workspace`. Decisions/structure stand;
 additive reasoning + one shard-key narrowing.
+
+## 2026-06-26 — ACCEPTED: scaffold design (M0)
+
+Blessed via /ship; implementation starting now on `feature/scaffold`. The M0
+contract: a single Go binary (`cmd/plq`, subcommands `worker|loadgen|reap`) whose
+**`Backend` interface** (8 methods: Enqueue/Claim/Drain/Ack/Release/Heartbeat/
+Fail/ReapExpired) is the apples-to-apples seam — `internal/queue` imports no
+driver; the shared `worker.go` loop + loadgen depend only on the interface. Key
+resolutions from the draft:
+- **Build tags, not runtime flag** — single-driver binaries (`-tags
+  postgres|valkey`, default=memory); don't ship dead driver code to scaled pods.
+  Apples-to-apples = identical loadgen *source* compiled per-driver.
+- **In-memory backend = default no-tag build** — dev, CI typecheck, and the
+  proofs' correctness oracle.
+- **Heartbeat kept + wired** (~Lease/3) — LLM batches can outlive the lease.
+- **Process model configurable** (`zero|fixed|cost`) — *the axis that locates the
+  PG→Valkey cutover*: zero-work finds the backend ceiling, cost-proportional shows
+  where a real workload sits vs it. M2 sweeps it (outer loop); feeds M4 migration
+  triggers. Code cost trivial; cloud-minutes ($20 cap) is the real budget → small grid.
+- **Reaper in-process** (v2: standalone service — flagged). **Sweep via
+  `WORKERS=N` re-run** (v2: loadgen-orchestrated ramp for autoscaling — flagged).
+- **Module path = `github.com/philosaether/pl-takehome-technical`** (matches the
+  shared repo; the path is an import prefix, not a second repo).
+- New artifact: `.meta/enhancements.md` — backlog of flagged "possible
+  enhancements" bullets; curate the most compelling set into the 1-page brief at M4.
+- Go toolchain absent on the box → installing via brew as the first build step.
