@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -144,13 +145,30 @@ func runLoadrun(ctx context.Context, be queue.Backend, cfg config.Config) {
 	if err != nil {
 		log.Fatalf("loadrun: %v", err)
 	}
-	res.Backend = cfg.Backend // the head-to-head series key
+	res.Backend = cfg.Backend       // the head-to-head series key
+	res.Shards = shardCount(cfg)    // the linearity-sweep series key (valkey 1/2/4; PG/memory = 1)
 	appendSweepRow(cfg.ResultsDir, res)
 	log.Printf("result: throughput=%.0f acks/s loop_p99=%s claim_p99=%s saturated=%t backlog=[%d,%d] acked=%d lease_exp=%d",
 		res.Throughput, res.LoopP99, res.ClaimP99, res.Saturated, res.MinBacklog, res.MaxBacklog, res.Acked, res.LeaseExp)
 	if !res.Saturated {
 		log.Printf("WARNING: not saturated — the plateau may be the load generator's, not the backend's. Bump PLQ_PRODUCERS.")
 	}
+}
+
+// shardCount derives the Valkey shard count from the configured addr list (one
+// addr per primary). PG/memory have no addr list → a single logical primary (1),
+// which is the honest series label for the head-to-head.
+func shardCount(cfg config.Config) int {
+	n := 0
+	for _, a := range strings.Split(cfg.ValkeyAddr, ",") {
+		if strings.TrimSpace(a) != "" {
+			n++
+		}
+	}
+	if n == 0 {
+		return 1
+	}
+	return n
 }
 
 func appendSweepRow(dir string, res loadgen.Result) {
