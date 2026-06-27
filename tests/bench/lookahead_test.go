@@ -47,7 +47,7 @@ func TestLookaheadCost(t *testing.T) {
 	)
 	sizes := benchSizes()
 
-	if be, err := postgres.New(postgres.Options{DSN: dsn, DefaultThreshold: T, DefaultMaxWait: time.Minute, MaxAttempts: 3}); err != nil {
+	if be, err := postgres.New(postgres.Options{DSNs: []string{dsn}, DefaultThreshold: T, DefaultMaxWait: time.Minute, MaxAttempts: 3}); err != nil {
 		t.Fatalf("schema: %v", err)
 	} else {
 		be.Close()

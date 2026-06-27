@@ -3,6 +3,7 @@ package conformance_test
 import (
 	"context"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -27,34 +28,49 @@ func TestMemory(t *testing.T) {
 }
 
 // The Postgres driver must produce identical observable behavior to the oracle.
-// Gated behind PLQ_TEST_POSTGRES so the default `go test` stays hermetic.
+// Gated behind PLQ_TEST_POSTGRES so the default `go test` stays hermetic. A
+// comma-separated list runs the SHARDED driver (the run-cloud-2 correctness gate)
+// — the contract must hold with workspaces routed across N primaries.
 //
 //	PLQ_TEST_POSTGRES=postgres://plq:plq@localhost:5433/plq?sslmode=disable go test ./tests/conformance/
+//	PLQ_TEST_POSTGRES="dsn1,dsn2" go test ./tests/conformance/   # 2-shard gate
 func TestPostgres(t *testing.T) {
-	dsn := os.Getenv("PLQ_TEST_POSTGRES")
-	if dsn == "" {
+	raw := os.Getenv("PLQ_TEST_POSTGRES")
+	if raw == "" {
 		t.Skip("set PLQ_TEST_POSTGRES to run the Postgres conformance suite")
+	}
+	var dsns []string
+	for _, d := range strings.Split(raw, ",") {
+		if d = strings.TrimSpace(d); d != "" {
+			dsns = append(dsns, d)
+		}
 	}
 	ctx := context.Background()
 
-	// ensure the schema exists, then a shared pool for truncation between scenarios.
-	if be, err := postgres.New(postgres.Options{DSN: dsn, DefaultThreshold: 1, DefaultMaxWait: time.Second, MaxAttempts: 3}); err != nil {
+	// ensure the schema exists on every shard, then a pool per shard for truncation.
+	if be, err := postgres.New(postgres.Options{DSNs: dsns, DefaultThreshold: 1, DefaultMaxWait: time.Second, MaxAttempts: 3}); err != nil {
 		t.Fatalf("schema setup: %v", err)
 	} else {
 		be.Close()
 	}
-	pool, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		t.Fatalf("pool: %v", err)
+	pools := make([]*pgxpool.Pool, 0, len(dsns))
+	for _, dsn := range dsns {
+		pool, err := pgxpool.New(ctx, dsn)
+		if err != nil {
+			t.Fatalf("pool: %v", err)
+		}
+		defer pool.Close()
+		pools = append(pools, pool)
 	}
-	defer pool.Close()
 
 	conformance.Run(t, func(cfg conformance.Config) queue.Backend {
-		if _, err := pool.Exec(ctx, `TRUNCATE work_units, tasks, dead_letters, tenant_config`); err != nil {
-			t.Fatalf("truncate: %v", err)
+		for _, pool := range pools {
+			if _, err := pool.Exec(ctx, `TRUNCATE work_units, tasks, dead_letters, tenant_config`); err != nil {
+				t.Fatalf("truncate: %v", err)
+			}
 		}
 		be, err := postgres.New(postgres.Options{
-			DSN:              dsn,
+			DSNs:             dsns,
 			DefaultThreshold: cfg.Threshold,
 			DefaultMaxWait:   cfg.MaxWait,
 			MaxAttempts:      cfg.MaxAttempts,

@@ -45,7 +45,7 @@ func forEachBackend(t *testing.T, threshold int, maxWait time.Duration, fn func(
 		t.Log("PLQ_TEST_POSTGRES unset — skipping postgres backend")
 	} else {
 		t.Run("postgres", func(t *testing.T) {
-			be, err := postgres.New(postgres.Options{DSN: dsn, DefaultThreshold: threshold, DefaultMaxWait: maxWait, MaxAttempts: 3})
+			be, err := postgres.New(postgres.Options{DSNs: []string{dsn}, DefaultThreshold: threshold, DefaultMaxWait: maxWait, MaxAttempts: 3})
 			if err != nil {
 				t.Fatalf("postgres: %v", err)
 			}

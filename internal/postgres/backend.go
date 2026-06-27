@@ -1,6 +1,13 @@
 // Package postgres is the Path 1 driver (M1): the queue.Backend over Postgres,
 // implementing designs/postgres-driver.md. The in-memory backend is the reference;
 // the conformance suite runs the same scenarios against both.
+//
+// Sharding (run-cloud-2): the backend holds N independent pools (one DSN per
+// primary) and routes every unit to its owning primary by hash(workspace) — the
+// SAME `hash(workspace)%N` scheme as the Valkey driver, so a sharded head-to-head
+// is fair by construction. A workspace lives entirely on one shard, so all of a
+// unit's ops route to the same pool; Claim is the only cross-shard op (it rotates
+// over the pools, first eligible unit wins).
 package postgres
 
 import (
@@ -8,8 +15,10 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -21,42 +30,71 @@ import (
 //go:embed schema.sql
 var schemaSQL string
 
+// ErrNoDSN is returned when New is given no DSNs.
+var ErrNoDSN = errors.New("postgres: no DSN")
+
 // Options configures the Postgres driver.
 type Options struct {
-	DSN              string
+	DSNs             []string // one per primary; 1 = baseline, 2/4/8 = the shard sweep
 	DefaultThreshold int
 	DefaultMaxWait   time.Duration
 	MaxAttempts      int
 }
 
-// Backend is the Postgres-backed queue.
+// Backend is the Postgres-backed queue (N independent primaries, routed by workspace).
 type Backend struct {
-	pool     *pgxpool.Pool
+	shards   []*pgxpool.Pool
 	maxTries int
 	tenants  *tenantCache
+	rr       atomic.Uint64 // round-robin cursor for Claim across shards
 }
 
 var _ queue.Backend = (*Backend)(nil)
 
-// New opens a pgx pool and applies the (idempotent) schema.
+// New opens one pgx pool per DSN and applies the (idempotent) schema to each.
 func New(o Options) (queue.Backend, error) {
+	if len(o.DSNs) == 0 {
+		return nil, ErrNoDSN
+	}
 	if o.MaxAttempts <= 0 {
 		o.MaxAttempts = 3
 	}
 	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, o.DSN)
-	if err != nil {
-		return nil, fmt.Errorf("postgres: pool: %w", err)
-	}
-	if err := applySchema(ctx, pool); err != nil {
-		pool.Close()
-		return nil, fmt.Errorf("postgres: schema: %w", err)
+	shards := make([]*pgxpool.Pool, 0, len(o.DSNs))
+	for _, dsn := range o.DSNs {
+		pool, err := pgxpool.New(ctx, dsn)
+		if err != nil {
+			for _, s := range shards {
+				s.Close()
+			}
+			return nil, fmt.Errorf("postgres: pool: %w", err)
+		}
+		if err := applySchema(ctx, pool); err != nil {
+			pool.Close()
+			for _, s := range shards {
+				s.Close()
+			}
+			return nil, fmt.Errorf("postgres: schema: %w", err)
+		}
+		shards = append(shards, pool)
 	}
 	return &Backend{
-		pool:     pool,
+		shards:   shards,
 		maxTries: o.MaxAttempts,
-		tenants:  newTenantCache(pool, o.DefaultThreshold, o.DefaultMaxWait),
+		tenants:  newTenantCache(o.DefaultThreshold, o.DefaultMaxWait),
 	}, nil
+}
+
+// shardForWorkspace routes a unit to its owning primary by workspace (A1: a whole
+// tenant stays on one shard — clean seam + failure domain). Stable across calls;
+// byte-identical scheme to the Valkey driver's router.
+func (b *Backend) shardForWorkspace(ws string) *pgxpool.Pool {
+	if len(b.shards) == 1 {
+		return b.shards[0]
+	}
+	h := fnv.New32a()
+	h.Write([]byte(ws))
+	return b.shards[h.Sum32()%uint32(len(b.shards))]
 }
 
 // applySchema runs schema.sql statement-by-statement (comments stripped) so it
@@ -87,9 +125,10 @@ func stripSQLComments(s string) string {
 }
 
 func (b *Backend) Enqueue(ctx context.Context, key queue.WorkUnitKey, payload []byte, cost int64) (int64, error) {
-	t, wait := b.tenants.get(ctx, key.Workspace)
+	pool := b.shardForWorkspace(key.Workspace)
+	t, wait := b.tenants.get(ctx, pool, key.Workspace)
 	var seq int64
-	err := b.pool.QueryRow(ctx, `
+	err := pool.QueryRow(ctx, `
 WITH up AS (
   INSERT INTO work_units AS w (ws, sess, peer, threshold, max_wait_ms, pending_cost, next_seq,
                                eligible, oldest_pending_at, flush_deadline)
@@ -113,9 +152,17 @@ RETURNING seq`,
 
 func (b *Backend) Claim(ctx context.Context, worker queue.WorkerID, lease time.Duration) (*queue.ClaimedUnit, error) {
 	leaseMs := int64(lease / time.Millisecond)
-	var ws, sess, peer, tok string
-	var expires time.Time
-	err := b.pool.QueryRow(ctx, `
+	// Consult shards in rotating order; the first eligible unit on any shard wins.
+	// A unit on shard S has a workspace W with shardForWorkspace(W)==S, so its later
+	// ops route back to S — the cross-shard scan here is the only place Claim differs
+	// from the single-primary path.
+	n := len(b.shards)
+	start := int(b.rr.Add(1))
+	for i := 0; i < n; i++ {
+		pool := b.shards[(start+i)%n]
+		var ws, sess, peer, tok string
+		var expires time.Time
+		err := pool.QueryRow(ctx, `
 UPDATE work_units SET claimed_by = $1, lease_token = gen_random_uuid(),
                       lease_ms = $2::int, lease_expires = now() + $2::int * interval '1 ms'
 WHERE (ws,sess,peer) = (
@@ -125,26 +172,29 @@ WHERE (ws,sess,peer) = (
   FOR UPDATE SKIP LOCKED LIMIT 1
 )
 RETURNING ws, sess, peer, lease_token::text, lease_expires`,
-		string(worker), leaseMs).Scan(&ws, &sess, &peer, &tok, &expires)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, nil // nothing eligible — not an error
+			string(worker), leaseMs).Scan(&ws, &sess, &peer, &tok, &expires)
+		if errors.Is(err, pgx.ErrNoRows) {
+			continue // nothing eligible on this shard — try the next
+		}
+		if err != nil {
+			return nil, err
+		}
+		return &queue.ClaimedUnit{
+			Key:       queue.WorkUnitKey{Workspace: ws, Session: sess, Peer: peer},
+			Worker:    worker,
+			Lease:     queue.LeaseToken(tok),
+			LeaseTill: expires,
+		}, nil
 	}
-	if err != nil {
-		return nil, err
-	}
-	return &queue.ClaimedUnit{
-		Key:       queue.WorkUnitKey{Workspace: ws, Session: sess, Peer: peer},
-		Worker:    worker,
-		Lease:     queue.LeaseToken(tok),
-		LeaseTill: expires,
-	}, nil
+	return nil, nil // nothing eligible on any shard — not an error
 }
 
 func (b *Backend) Drain(ctx context.Context, c *queue.ClaimedUnit, max int) ([]queue.Task, error) {
-	if err := b.checkLease(ctx, b.pool, c); err != nil {
+	pool := b.shardForWorkspace(c.Key.Workspace)
+	if err := b.checkLease(ctx, pool, c); err != nil {
 		return nil, err
 	}
-	rows, err := b.pool.Query(ctx, `
+	rows, err := pool.Query(ctx, `
 SELECT seq, payload, cost FROM tasks
 WHERE ws=$1 AND sess=$2 AND peer=$3 ORDER BY seq LIMIT $4`,
 		c.Key.Workspace, c.Key.Session, c.Key.Peer, max)
@@ -166,7 +216,8 @@ WHERE ws=$1 AND sess=$2 AND peer=$3 ORDER BY seq LIMIT $4`,
 }
 
 func (b *Backend) Ack(ctx context.Context, c *queue.ClaimedUnit, throughSeq int64) (bool, error) {
-	tx, err := b.pool.Begin(ctx)
+	pool := b.shardForWorkspace(c.Key.Workspace)
+	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return false, err
 	}
@@ -214,7 +265,8 @@ RETURNING elig.keep`,
 }
 
 func (b *Backend) Release(ctx context.Context, c *queue.ClaimedUnit) error {
-	ct, err := b.pool.Exec(ctx, `
+	pool := b.shardForWorkspace(c.Key.Workspace)
+	ct, err := pool.Exec(ctx, `
 UPDATE work_units SET claimed_by=NULL, lease_token=NULL, lease_expires=NULL
 WHERE ws=$1 AND sess=$2 AND peer=$3 AND claimed_by=$4 AND lease_token=$5::uuid`,
 		c.Key.Workspace, c.Key.Session, c.Key.Peer, string(c.Worker), string(c.Lease))
@@ -228,8 +280,9 @@ WHERE ws=$1 AND sess=$2 AND peer=$3 AND claimed_by=$4 AND lease_token=$5::uuid`,
 }
 
 func (b *Backend) Heartbeat(ctx context.Context, c *queue.ClaimedUnit, extend time.Duration) error {
+	pool := b.shardForWorkspace(c.Key.Workspace)
 	ms := int64(extend / time.Millisecond)
-	ct, err := b.pool.Exec(ctx, `
+	ct, err := pool.Exec(ctx, `
 UPDATE work_units SET lease_ms=$6::int, lease_expires = now() + $6::int * interval '1 ms'
 WHERE ws=$1 AND sess=$2 AND peer=$3 AND claimed_by=$4 AND lease_token=$5::uuid`,
 		c.Key.Workspace, c.Key.Session, c.Key.Peer, string(c.Worker), string(c.Lease), ms)
@@ -243,7 +296,8 @@ WHERE ws=$1 AND sess=$2 AND peer=$3 AND claimed_by=$4 AND lease_token=$5::uuid`,
 }
 
 func (b *Backend) Fail(ctx context.Context, c *queue.ClaimedUnit, seq int64, reason string) error {
-	tx, err := b.pool.Begin(ctx)
+	pool := b.shardForWorkspace(c.Key.Workspace)
+	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
@@ -311,23 +365,32 @@ WHERE ws=$1 AND sess=$2 AND peer=$3`,
 }
 
 func (b *Backend) ReapExpired(ctx context.Context, now time.Time) (int, int, error) {
-	r, err := b.pool.Exec(ctx, `
+	// Reap runs per-shard (each primary independently reclaims its expired leases and
+	// flush-promotes its aged units); sum the counts.
+	var reclaimed, flushed int
+	for _, pool := range b.shards {
+		r, err := pool.Exec(ctx, `
 UPDATE work_units SET claimed_by=NULL, lease_token=NULL, lease_expires=NULL
 WHERE claimed_by IS NOT NULL AND lease_expires < $1`, now)
-	if err != nil {
-		return 0, 0, err
-	}
-	f, err := b.pool.Exec(ctx, `
+		if err != nil {
+			return reclaimed, flushed, err
+		}
+		reclaimed += int(r.RowsAffected())
+		f, err := pool.Exec(ctx, `
 UPDATE work_units SET eligible=true
 WHERE NOT eligible AND claimed_by IS NULL AND flush_deadline <= $1 AND pending_cost > 0`, now)
-	if err != nil {
-		return int(r.RowsAffected()), 0, err
+		if err != nil {
+			return reclaimed, flushed, err
+		}
+		flushed += int(f.RowsAffected())
 	}
-	return int(r.RowsAffected()), int(f.RowsAffected()), nil
+	return reclaimed, flushed, nil
 }
 
 func (b *Backend) Close() error {
-	b.pool.Close()
+	for _, pool := range b.shards {
+		pool.Close()
+	}
 	return nil
 }
 
@@ -337,33 +400,42 @@ var (
 )
 
 // Stats reports queue depth cheaply — all over work_units (10^4–10^5 rows) plus a
-// small DLQ count, so it's safe to call once per second during a load run.
+// small DLQ count, so it's safe to call once per second during a load run. Sums
+// across shards; OldestBelowT is the max staleness over all primaries.
 func (b *Backend) Stats(ctx context.Context) (queue.Stats, error) {
-	var total, eligible, dlq int64
-	var oldestS float64
-	err := b.pool.QueryRow(ctx, `
+	var out queue.Stats
+	for _, pool := range b.shards {
+		var total, eligible, dlq int64
+		var oldestS float64
+		err := pool.QueryRow(ctx, `
 SELECT count(*),
        count(*) FILTER (WHERE eligible AND claimed_by IS NULL),
        COALESCE(EXTRACT(EPOCH FROM (now() - min(oldest_pending_at)
          FILTER (WHERE NOT eligible AND claimed_by IS NULL))), 0),
        (SELECT count(*) FROM dead_letters)
 FROM work_units`).Scan(&total, &eligible, &oldestS, &dlq)
-	if err != nil {
-		return queue.Stats{}, err
+		if err != nil {
+			return queue.Stats{}, err
+		}
+		out.TotalUnits += total
+		out.EligibleUnits += eligible
+		out.DeadLetters += dlq
+		if d := time.Duration(oldestS * float64(time.Second)); d > out.OldestBelowT {
+			out.OldestBelowT = d
+		}
 	}
-	return queue.Stats{
-		TotalUnits:    total,
-		EligibleUnits: eligible,
-		DeadLetters:   dlq,
-		OldestBelowT:  time.Duration(oldestS * float64(time.Second)),
-	}, nil
+	return out, nil
 }
 
-// Reset truncates the queue tables (keeps tenant_config) — for resetting between
-// sweep points. Not part of the Backend contract; bench/test only.
+// Reset truncates the queue tables on every shard (keeps tenant_config) — for
+// resetting between sweep points. Not part of the Backend contract; bench/test only.
 func (b *Backend) Reset(ctx context.Context) error {
-	_, err := b.pool.Exec(ctx, `TRUNCATE work_units, tasks, dead_letters`)
-	return err
+	for _, pool := range b.shards {
+		if _, err := pool.Exec(ctx, `TRUNCATE work_units, tasks, dead_letters`); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // querier is satisfied by both *pgxpool.Pool and pgx.Tx.
@@ -397,8 +469,8 @@ WHERE ws=$1 AND sess=$2 AND peer=$3 AND claimed_by=$4 AND lease_token=$5::uuid F
 
 // tenantCache resolves (ws → threshold, max_wait) from tenant_config, falling back
 // to the configured defaults; cached for the process lifetime to keep enqueue local.
+// The caller passes the workspace's shard (the tenant_config row lives on that shard).
 type tenantCache struct {
-	pool    *pgxpool.Pool
 	defT    int
 	defWait time.Duration
 	mu      sync.RWMutex
@@ -410,11 +482,11 @@ type tenantCfg struct {
 	maxWait   time.Duration
 }
 
-func newTenantCache(pool *pgxpool.Pool, defT int, defWait time.Duration) *tenantCache {
-	return &tenantCache{pool: pool, defT: defT, defWait: defWait, m: map[string]tenantCfg{}}
+func newTenantCache(defT int, defWait time.Duration) *tenantCache {
+	return &tenantCache{defT: defT, defWait: defWait, m: map[string]tenantCfg{}}
 }
 
-func (c *tenantCache) get(ctx context.Context, ws string) (int, time.Duration) {
+func (c *tenantCache) get(ctx context.Context, q querier, ws string) (int, time.Duration) {
 	c.mu.RLock()
 	v, ok := c.m[ws]
 	c.mu.RUnlock()
@@ -423,7 +495,7 @@ func (c *tenantCache) get(ctx context.Context, ws string) (int, time.Duration) {
 	}
 	res := tenantCfg{threshold: c.defT, maxWait: c.defWait}
 	var t, waitMs int
-	if err := c.pool.QueryRow(ctx,
+	if err := q.QueryRow(ctx,
 		`SELECT threshold, max_wait_ms FROM tenant_config WHERE ws=$1`, ws).Scan(&t, &waitMs); err == nil {
 		res = tenantCfg{threshold: t, maxWait: time.Duration(waitMs) * time.Millisecond}
 	}
