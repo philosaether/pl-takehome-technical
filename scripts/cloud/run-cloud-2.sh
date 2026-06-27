@@ -110,11 +110,11 @@ run_track() {
     $SSH "$USER@$wip" "env PLQ_BACKEND=$backend $cvar='$conn' ./plq-$backend reset"
     for pip in "${pips[@]}"; do
       # </dev/null so the backgrounded producer doesn't hold the ssh channel open
-      $SSH "$USER@$pip" "pkill -f 'plq-' || true; nohup ./producers.sh $backend '$conn' 256 </dev/null >producers.log 2>&1 &"
+      $SSH "$USER@$pip" "pkill -x plq-$backend || true; nohup ./producers.sh $backend '$conn' 256 </dev/null >producers.log 2>&1 &"
     done
     $SSH "$USER@$wip" "sleep 10"  # prime the queue past the worker's appetite
     $SSH "$USER@$wip" "./subsweep.sh $backend $label '$conn' '$WORKERS_ARG' '$PROCS_ARG' $DUR_ARG $WARM_ARG"
-    for pip in "${pips[@]}"; do $SSH "$USER@$pip" "pkill -f 'plq-' || true"; done
+    for pip in "${pips[@]}"; do $SSH "$USER@$pip" "pkill -x plq-$backend || true"; done
   done
 }
 
@@ -137,10 +137,10 @@ for mode in off everysec always; do
   for s in "${sets[@]}"; do
     $SSH "$USER@$DUR_PUB" "docker exec valkey valkey-cli CONFIG SET $s" || echo "  WARN: CONFIG SET $s failed"
   done
-  $SSH "$USER@$W_VAL" "pkill -f 'plq-' || true; env PLQ_BACKEND=valkey PLQ_VALKEY_ADDR='$DUR_ADDR' ./plq-valkey reset"
-  $SSH "$USER@$DUR_PROD" "pkill -f 'plq-' || true; nohup ./producers.sh valkey '$DUR_ADDR' 256 </dev/null >producers.log 2>&1 &"
+  $SSH "$USER@$W_VAL" "pkill -x plq-valkey || true; env PLQ_BACKEND=valkey PLQ_VALKEY_ADDR='$DUR_ADDR' ./plq-valkey reset"
+  $SSH "$USER@$DUR_PROD" "pkill -x plq-valkey || true; nohup ./producers.sh valkey '$DUR_ADDR' 256 </dev/null >producers.log 2>&1 &"
   $SSH "$USER@$W_VAL" "sleep 10; ./subsweep.sh valkey valkey-$mode '$DUR_ADDR' '100 1000' 'zero' $DUR_ARG $WARM_ARG"
-  $SSH "$USER@$DUR_PROD" "pkill -f 'plq-' || true"
+  $SSH "$USER@$DUR_PROD" "pkill -x plq-valkey || true"
   $SSH "$USER@$W_VAL" "mkdir -p durresults && mv results/sweep.csv durresults/sweep-$mode.csv 2>/dev/null || true"
 done
 
