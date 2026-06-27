@@ -400,3 +400,17 @@ dry-ran locally, then ran the gated cloud head-to-head (Phil authorized the spen
   anonymous pulls — worked around with a throwaway `DOCKER_CONFIG` (global config
   untouched). AWS EC2 needs the `praxis`/terraform-admin profile; `default`
   (pb-dev-laptop) lacks ec2 perms.
+
+## 2026-06-27 — ACCEPTED: ambitious head-to-head (run-cloud-2), shard both backends
+
+`/ship` of `designs/ambitious-head-to-head.md` on `feature/ambitious-head-to-head`.
+Upgrades the head-to-head to airtight: isolated/saturated topology (PLQ_PRODUCERS=0
+worker measuring external loadgen + a PLQ_RESET gate); **both** backends sharded
+1/2/4/8 through the SAME hash(workspace)%N router — via a new **multi-DSN Postgres
+router** (mirror of the Valkey backend) so the comparison isolates per-primary engine
+speed from horizontal scaling; tuned-PG baseline; durability tradeoff (fsync
+off/everysec/always); full process sweep 0/2/20/200ms; $/throughput + p99. 9 configs /
+216 points, 3 parallel tracks, 26 boxes, ~45 min, ~$6-7. **Build router-first:** the
+multi-DSN PG router + conformance 8/8 vs a 2-shard PG is the correctness gate, done
+first/locally before any cloud spend. Key bet: ~8 sharded Postgres ≈ 1 Valkey (the
+migration case in one chart, and it preempts "just shard your Postgres").
