@@ -117,15 +117,21 @@ resource "aws_instance" "valkey" {
   instance_type          = var.valkey_type
   key_name               = aws_key_pair.plq.key_name
   vpc_security_group_ids = [aws_security_group.plq.id]
-  user_data              = <<-EOF
+  root_block_device {
+    volume_size = 20 # AOF headroom under a long sweep (8 GiB default fills → bgsave fails → writes freeze)
+  }
+  # `--save ""` disables RDB snapshots — durability is via AOF (appendonly/everysec),
+  # so RDB is just a liability (a failed bgsave triggers stop-writes-on-bgsave-error
+  # and freezes the instance, which sank the first run).
+  user_data = <<-EOF
     #!/bin/bash
     dnf install -y docker
     systemctl enable --now docker
     docker run -d --name valkey --restart always -p 6379:6379 valkey/valkey:8.1 \
       valkey-server --appendonly yes --appendfsync everysec --aof-use-rdb-preamble yes \
-      --maxmemory 512mb --maxmemory-policy noeviction
+      --save "" --maxmemory 512mb --maxmemory-policy noeviction
   EOF
-  tags                   = { Name = "plq-valkey-${count.index + 1}" }
+  tags      = { Name = "plq-valkey-${count.index + 1}" }
 }
 
 # Worker runners — each runs `plq loadrun` with PLQ_PRODUCERS=0 (the isolated,

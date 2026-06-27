@@ -118,10 +118,14 @@ run_track() {
   done
 }
 
-echo "=== running tracks (sequential, fail-loud) ==="
-run_track postgres postgres       "$W_PGSH" "$P_PGSH" "$PG1" "$PG2" "$PG4" "$PG8"
-run_track valkey   valkey         "$W_VAL"  "$P_VAL"  "$V1"  "$V2"  "$V4"  "$V8"
-run_track postgres postgres-tuned "$W_PGT"  "$P_PGT"  "$PGT"
+# Best-effort from here: a track/datastore failure must NOT abort before the merge,
+# or we'd lose everything that already ran (and auto-teardown would take the boxes).
+# Each track is pulled by the final merge regardless of who failed.
+set +e
+echo "=== running tracks (best-effort; merge always runs) ==="
+run_track postgres postgres       "$W_PGSH" "$P_PGSH" "$PG1" "$PG2" "$PG4" "$PG8" || echo "WARN: pg-sharded track failed"
+run_track valkey   valkey         "$W_VAL"  "$P_VAL"  "$V1"  "$V2"  "$V4"  "$V8"  || echo "WARN: valkey track failed"
+run_track postgres postgres-tuned "$W_PGT"  "$P_PGT"  "$PGT"                      || echo "WARN: pg-tuned track failed"
 echo "=== all tracks done ==="
 
 echo "=== durability tail (valkey×1, process=0, fsync off/everysec/always) ==="
