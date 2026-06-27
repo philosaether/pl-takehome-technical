@@ -13,7 +13,7 @@
 set -euo pipefail
 
 TFDIR=deploy/terraform
-SSH="ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=15"
+SSH="ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=4"
 USER=ec2-user
 OUT=results/run-cloud-2
 mkdir -p "$OUT"
