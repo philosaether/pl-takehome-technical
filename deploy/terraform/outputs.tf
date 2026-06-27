@@ -23,6 +23,10 @@ output "valkey_addrs_8" { value = join(",", slice(local.valkey_addrs, 0, min(8, 
 output "worker_runner_ips" { value = aws_instance.worker_runner[*].public_ip }
 output "producer_runner_ips" { value = aws_instance.producer_runner[*].public_ip }
 
+# Valkey box public IPs — the durability tail SSHes valkey[0] to CONFIG SET its
+# fsync mode live (the datastores' private IPs aren't reachable from the laptop).
+output "valkey_public_ips" { value = aws_instance.valkey[*].public_ip }
+
 # Private IPs for intra-cluster wiring / debugging.
 output "pg_private_ips" { value = aws_instance.pg[*].private_ip }
 output "valkey_private_ips" { value = aws_instance.valkey[*].private_ip }

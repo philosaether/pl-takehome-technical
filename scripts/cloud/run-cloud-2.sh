@@ -18,6 +18,12 @@ USER=ec2-user
 OUT=results/run-cloud-2
 mkdir -p "$OUT"
 
+# Sweep matrix (override for a cheap SMOKE: WORKERS_ARG="1 10" PROCS_ARG=zero DUR_ARG=5s WARM_ARG=2s).
+WORKERS_ARG="${WORKERS_ARG:-1 10 30 100 300 1000}"
+PROCS_ARG="${PROCS_ARG:-zero 2ms 20ms 200ms}"
+DUR_ARG="${DUR_ARG:-20s}"
+WARM_ARG="${WARM_ARG:-8s}"
+
 tf() { terraform -chdir="$TFDIR" output -raw "$1"; }
 tflist() { terraform -chdir="$TFDIR" output -json "$1" | tr -d '[]" ' | tr ',' '\n' | grep .; }
 
@@ -35,6 +41,8 @@ V1=$(tf valkey_addrs_1); V2=$(tf valkey_addrs_2); V4=$(tf valkey_addrs_4); V8=$(
 PG_PRIV=($(tflist pg_private_ips))
 # shellcheck disable=SC2207
 VAL_PRIV=($(tflist valkey_private_ips))
+# shellcheck disable=SC2207
+VAL_PUB=($(tflist valkey_public_ips))   # for the durability tail's live CONFIG SET
 PGT_PRIV=$(tf pg_tuned_private_ip)
 
 W_PGSH=${WORKERS[0]}; W_PGT=${WORKERS[1]}; W_VAL=${WORKERS[2]}
@@ -80,6 +88,11 @@ wait_ports "$W_PGSH" "$(printf '%s:5432 ' "${PG_PRIV[@]}")"  && echo "  PG pool 
 wait_ports "$W_VAL"  "$(printf '%s:6379 ' "${VAL_PRIV[@]}")" && echo "  valkey pool ready"
 wait_ports "$W_PGT"  "$PGT_PRIV:5432"                        && echo "  tuned PG ready"
 
+echo "=== clearing prior results on worker boxes (clean re-runs) ==="
+for wip in "$W_PGSH" "$W_VAL" "$W_PGT"; do
+  $SSH "$USER@$wip" "rm -rf results durresults; mkdir -p results"
+done
+
 connvar() { [ "$1" = postgres ] && echo PLQ_POSTGRES_DSN || echo PLQ_VALKEY_ADDR; }
 
 # run_track <backend> <label> <worker_ip> <producer_ips_csv> <conn...>
@@ -96,37 +109,38 @@ run_track() {
     echo "--- [$label] shards=$shards: reset → producers → sweep ---"
     $SSH "$USER@$wip" "env PLQ_BACKEND=$backend $cvar='$conn' ./plq-$backend reset"
     for pip in "${pips[@]}"; do
-      $SSH "$USER@$pip" "pkill -f 'plq-' || true; nohup ./producers.sh $backend '$conn' 256 >producers.log 2>&1 &"
+      # </dev/null so the backgrounded producer doesn't hold the ssh channel open
+      $SSH "$USER@$pip" "pkill -f 'plq-' || true; nohup ./producers.sh $backend '$conn' 256 </dev/null >producers.log 2>&1 &"
     done
     $SSH "$USER@$wip" "sleep 10"  # prime the queue past the worker's appetite
-    $SSH "$USER@$wip" "./subsweep.sh $backend $label '$conn'"
+    $SSH "$USER@$wip" "./subsweep.sh $backend $label '$conn' '$WORKERS_ARG' '$PROCS_ARG' $DUR_ARG $WARM_ARG"
     for pip in "${pips[@]}"; do $SSH "$USER@$pip" "pkill -f 'plq-' || true"; done
   done
 }
 
-echo "=== launching 3 tracks in parallel ==="
-run_track postgres postgres       "$W_PGSH" "$P_PGSH" "$PG1" "$PG2" "$PG4" "$PG8" &
-run_track valkey   valkey         "$W_VAL"  "$P_VAL"  "$V1"  "$V2"  "$V4"  "$V8"  &
-run_track postgres postgres-tuned "$W_PGT"  "$P_PGT"  "$PGT" &
-wait
+echo "=== running tracks (sequential, fail-loud) ==="
+run_track postgres postgres       "$W_PGSH" "$P_PGSH" "$PG1" "$PG2" "$PG4" "$PG8"
+run_track valkey   valkey         "$W_VAL"  "$P_VAL"  "$V1"  "$V2"  "$V4"  "$V8"
+run_track postgres postgres-tuned "$W_PGT"  "$P_PGT"  "$PGT"
 echo "=== all tracks done ==="
 
 echo "=== durability tail (valkey×1, process=0, fsync off/everysec/always) ==="
-# Reconfigure the single primary live between runs; write to a separate dir → durability.csv.
-DUR_ADDR="$V1"; DUR_HOST="${DUR_ADDR%%:*}"; DUR_PROD="${P_VAL%%,*}" # first valkey producer
+# valkey×1 = the valkey[0] box. CONFIG SET goes to its PUBLIC IP (the private addr
+# isn't reachable from the laptop); the worker/producer use the private addr.
+DUR_ADDR="$V1"; DUR_PROD="${P_VAL%%,*}"; DUR_PUB="${VAL_PUB[0]}"
 for mode in off everysec always; do
   case "$mode" in
-    off)      cfg='CONFIG SET appendonly no' ;;
-    everysec) cfg='CONFIG SET appendonly yes; CONFIG SET appendfsync everysec' ;;
-    always)   cfg='CONFIG SET appendonly yes; CONFIG SET appendfsync always' ;;
+    off)      sets=("appendonly no") ;;
+    everysec) sets=("appendonly yes" "appendfsync everysec") ;;
+    always)   sets=("appendonly yes" "appendfsync always") ;;
   esac
-  $SSH "$USER@$W_VAL" "docker exec valkey valkey-cli $cfg" 2>/dev/null || \
-    $SSH "$USER@$DUR_HOST" "docker exec valkey valkey-cli $cfg" || true
+  for s in "${sets[@]}"; do
+    $SSH "$USER@$DUR_PUB" "docker exec valkey valkey-cli CONFIG SET $s" || echo "  WARN: CONFIG SET $s failed"
+  done
   $SSH "$USER@$W_VAL" "pkill -f 'plq-' || true; env PLQ_BACKEND=valkey PLQ_VALKEY_ADDR='$DUR_ADDR' ./plq-valkey reset"
-  $SSH "$USER@$DUR_PROD" "nohup ./producers.sh valkey '$DUR_ADDR' 256 >producers.log 2>&1 &"
-  $SSH "$USER@$W_VAL" "sleep 10; ./subsweep.sh valkey valkey-$mode '$DUR_ADDR' '100 1000' 'zero' 20s 8s"
+  $SSH "$USER@$DUR_PROD" "pkill -f 'plq-' || true; nohup ./producers.sh valkey '$DUR_ADDR' 256 </dev/null >producers.log 2>&1 &"
+  $SSH "$USER@$W_VAL" "sleep 10; ./subsweep.sh valkey valkey-$mode '$DUR_ADDR' '100 1000' 'zero' $DUR_ARG $WARM_ARG"
   $SSH "$USER@$DUR_PROD" "pkill -f 'plq-' || true"
-  # move this mode's rows into the durability sample area on the worker box
   $SSH "$USER@$W_VAL" "mkdir -p durresults && mv results/sweep.csv durresults/sweep-$mode.csv 2>/dev/null || true"
 done
 
