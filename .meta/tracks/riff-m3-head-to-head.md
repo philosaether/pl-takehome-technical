@@ -210,3 +210,16 @@ stays gated for an explicit "make cloud-up" go.
 
 **Verify:** smoke sweep produces the 5-series chart; `terraform plan` is clean and
 shows the expected resource counts. Cloud `apply` remains gated.
+
+---
+
+## Note 4: track results/ as per-run buckets ✅ PLAYED
+
+Started tracking `results/` (was fully gitignored). Convention: one dir per run —
+`run-cloud-N/` (graded AWS sweeps), `run-local-N/` (laptop/dev), `lookahead/` (the
+look-ahead bench — distinct shape, named not numbered). gitignore now tracks
+`run-*/` + `lookahead/` + `README.md`, ignores loose top-level scratch. Sorted the
+existing artifacts: cloud head-to-head → `run-cloud-1/` (+ its results.md), M3 dry
+run → `run-local-1/`, M2 bench → `lookahead/`. Removed the
+`.meta/assessments/m3-head-to-head/` copy (was only a workaround for the ignored
+results/ — one source of truth now). `results/README.md` documents it.
