@@ -6,16 +6,22 @@ Current work state. Update constantly, delete items when done.
 
 ## Active
 
-- **M4: the 1-page PDF one-pager** (`feature/one-pager`, started 2026-06-27). Design
-  **accepted + building** → `designs/one-pager-construction.md` (+ `honcho-fig2-source.md`).
-  Deliverable: a 1-page LaTeX PDF for Phil to email Vineeth + a repo invite. Locked: LaTeX;
-  two-stage migration framing (growth spine); 3 figures — Fig 1 look-ahead hero (1,364×),
-  Fig 2 the cited diff vs Honcho's real `get_and_claim_work_units`, Fig 3 the workers×process
-  manifold (2-D + 3-D, A/B in SII). Copy in Phil's voice (figs+titles his, body collaborative;
-  current sample copy in the design doc). Hard cap: 1 page.
-  - **Build steps:** (1) redraw the 3 figures from `results/` to deliverable-grade (one
-    palette/typeface); (2) LaTeX scaffold (masthead + 2-col body + endnotes band); (3) compile
-    → SII loop. Then Phil's voice/layout polish pass.
+- **Demo prep (tomorrow, 2026-06-28)** — the 30-min screen-share rehearsal: run the
+  load test live + the brief's answer set (backend + 2nd choice; eligibility cost +
+  enqueue-path aggregate; the 3-of-10 crash trace; hot/wedged/stranded unit; fairness
+  under simultaneous threshold-cross; runtime-T change; plateau + first bottleneck;
+  multi-machine sharding; "10× the workers — what breaks first?"). Material: the
+  designs, `results/`, `talking-points.md`, `one-pager/`. See M4 in `roadmap.md`.
+
+## Shipped (all accepted + merged to `main`)
+
+- **M4 — the 1-page one-pager** (`one-pager/one-pager.pdf`, merged 2026-06-27,
+  `4aaaa24`). 1-page LaTeX PDF (tectonic), two-stage migration framing; 3 figures —
+  look-ahead hero (1,364×), the cited diff vs Honcho's real `get_and_claim_work_units`,
+  the workers×process manifold (2-D, linear interp). Design + Honcho mapping in
+  `designs/one-pager-construction.md` + `honcho-fig2-source.md`. Reviewed (README
+  refreshed, manifold honesty fix). **Ready to email Vineeth + repo invite.**
+  M-PR cancelled.
 
 ## Cancelled
 
