@@ -70,8 +70,10 @@ echo "=== waiting for runner SSH ==="
 wait_ssh "${WORKERS[@]}" "${PRODUCERS[@]}"
 
 echo "=== distributing binaries + scripts ==="
-for ip in "$W_PGSH" "$W_PGT" "${PRODUCERS[0]}" "${PRODUCERS[1]}" "${PRODUCERS[2]}"; do ship "$ip" postgres; done
-for ip in "$W_VAL" "${PRODUCERS[3]}" "${PRODUCERS[4]}" "${PRODUCERS[5]}"; do ship "$ip" valkey; done
+# Ship per the (count-adaptive) role assignment, not raw indices — the producer
+# pool may be 4 (constrained) or 6 (full). ${P_*//,/ } splits the CSV for the loop.
+for ip in "$W_PGSH" "$W_PGT" ${P_PGSH//,/ } ${P_PGT//,/ }; do ship "$ip" postgres; done
+for ip in "$W_VAL" ${P_VAL//,/ }; do ship "$ip" valkey; done
 
 echo "=== waiting for datastores (up to ~6min; postgres:16 pulls on fresh boxes) ==="
 wait_ports "$W_PGSH" "$(printf '%s:5432 ' "${PG_PRIV[@]}")"  && echo "  PG pool ready"
@@ -111,7 +113,7 @@ echo "=== all tracks done ==="
 
 echo "=== durability tail (valkey×1, process=0, fsync off/everysec/always) ==="
 # Reconfigure the single primary live between runs; write to a separate dir → durability.csv.
-DUR_ADDR="$V1"; DUR_HOST="${DUR_ADDR%%:*}"
+DUR_ADDR="$V1"; DUR_HOST="${DUR_ADDR%%:*}"; DUR_PROD="${P_VAL%%,*}" # first valkey producer
 for mode in off everysec always; do
   case "$mode" in
     off)      cfg='CONFIG SET appendonly no' ;;
@@ -121,9 +123,9 @@ for mode in off everysec always; do
   $SSH "$USER@$W_VAL" "docker exec valkey valkey-cli $cfg" 2>/dev/null || \
     $SSH "$USER@$DUR_HOST" "docker exec valkey valkey-cli $cfg" || true
   $SSH "$USER@$W_VAL" "pkill -f 'plq-' || true; env PLQ_BACKEND=valkey PLQ_VALKEY_ADDR='$DUR_ADDR' ./plq-valkey reset"
-  $SSH "$USER@${PRODUCERS[3]}" "nohup ./producers.sh valkey '$DUR_ADDR' 256 >producers.log 2>&1 &"
+  $SSH "$USER@$DUR_PROD" "nohup ./producers.sh valkey '$DUR_ADDR' 256 >producers.log 2>&1 &"
   $SSH "$USER@$W_VAL" "sleep 10; ./subsweep.sh valkey valkey-$mode '$DUR_ADDR' '100 1000' 'zero' 20s 8s"
-  $SSH "$USER@${PRODUCERS[3]}" "pkill -f 'plq-' || true"
+  $SSH "$USER@$DUR_PROD" "pkill -f 'plq-' || true"
   # move this mode's rows into the durability sample area on the worker box
   $SSH "$USER@$W_VAL" "mkdir -p durresults && mv results/sweep.csv durresults/sweep-$mode.csv 2>/dev/null || true"
 done
