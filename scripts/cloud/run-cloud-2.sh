@@ -32,9 +32,14 @@ mapfile -t VAL_PRIV < <(tflist valkey_private_ips)
 PGT_PRIV=$(tf pg_tuned_private_ip)
 
 W_PGSH=${WORKERS[0]}; W_PGT=${WORKERS[1]}; W_VAL=${WORKERS[2]}
-P_PGSH="${PRODUCERS[0]},${PRODUCERS[1]}"
-P_PGT="${PRODUCERS[2]}"
-P_VAL="${PRODUCERS[3]},${PRODUCERS[4]},${PRODUCERS[5]}"
+# Producer assignment adapts to the pool size: 6 (full run) → pg-sharded 2 / tuned 1 /
+# valkey 3; 4 (quota-constrained run) → pg-sharded 1 / tuned 1 / valkey 2 (valkey is
+# the fast one, so it gets the spare producer either way).
+if [ "${#PRODUCERS[@]}" -ge 6 ]; then
+  P_PGSH="${PRODUCERS[0]},${PRODUCERS[1]}"; P_PGT="${PRODUCERS[2]}"; P_VAL="${PRODUCERS[3]},${PRODUCERS[4]},${PRODUCERS[5]}"
+else
+  P_PGSH="${PRODUCERS[0]}"; P_PGT="${PRODUCERS[1]}"; P_VAL="${PRODUCERS[2]},${PRODUCERS[3]}"
+fi
 
 echo "=== building static linux binaries ==="
 GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -tags postgres -o /tmp/plq-postgres ./cmd/plq
@@ -75,7 +80,10 @@ run_track() {
   local backend=$1 label=$2 wip=$3 pcsv=$4; shift 4
   local cvar; cvar=$(connvar "$backend")
   IFS=, read -ra pips <<< "$pcsv"
+  local last=""
   for conn in "$@"; do
+    [ "$conn" = "$last" ] && continue  # pool < requested shard count → skip the dup (e.g. ×8==×4 at 4 boxes)
+    last="$conn"
     local shards; shards=$(echo "$conn" | tr ',' '\n' | grep -c .)
     echo "--- [$label] shards=$shards: reset → producers → sweep ---"
     $SSH "$USER@$wip" "env PLQ_BACKEND=$backend $cvar='$conn' ./plq-$backend reset"
