@@ -45,6 +45,11 @@ VAL_PRIV=($(tflist valkey_private_ips))
 VAL_PUB=($(tflist valkey_public_ips))   # for the durability tail's live CONFIG SET
 PGT_PRIV=$(tf pg_tuned_private_ip)
 
+# Fail fast with a clear message if a pool came up short (vs a cryptic set -u unbound).
+[ "${#WORKERS[@]}"   -ge 3 ] || { echo "ERROR: need 3 worker runners, got ${#WORKERS[@]}" >&2; exit 1; }
+[ "${#PRODUCERS[@]}" -ge 4 ] || { echo "ERROR: need >=4 producer runners, got ${#PRODUCERS[@]}" >&2; exit 1; }
+[ "${#VAL_PUB[@]}"   -ge 1 ] || { echo "ERROR: no valkey public IPs (durability needs one)" >&2; exit 1; }
+
 W_PGSH=${WORKERS[0]}; W_PGT=${WORKERS[1]}; W_VAL=${WORKERS[2]}
 # Producer assignment adapts to the pool size: 6 (full run) → pg-sharded 2 / tuned 1 /
 # valkey 3; 4 (quota-constrained run) → pg-sharded 1 / tuned 1 / valkey 2 (valkey is
@@ -66,7 +71,9 @@ ship() { # ship <ip> <backend-binary>
 }
 wait_ssh() { # block until SSH answers on each box (fresh instances boot ~30s)
   for ip in "$@"; do
-    for i in $(seq 1 40); do $SSH "$USER@$ip" true 2>/dev/null && break; sleep 5; done
+    local ok=0
+    for i in $(seq 1 40); do $SSH "$USER@$ip" true 2>/dev/null && { ok=1; break; }; sleep 5; done
+    [ "$ok" = 1 ] || { echo "ERROR: SSH never became ready on $ip (gave up after ~200s)" >&2; return 1; }
   done
 }
 wait_ports() { # wait_ports <worker_ip> <host:port...> — all open, polled from the worker box
@@ -153,8 +160,9 @@ echo "=== merge + graph ==="
 merge() { # merge <ip> <remote-path>  → append rows (header once) to $1-collected
   $SSH "$USER@$1" "cat $2" 2>/dev/null
 }
-{ # main sweep.csv: header from the first worker, then all data rows
-  merge "$W_PGSH" results/sweep.csv | head -1
+{ # header from the FIRST worker that produced data (a failed track must not cost the
+  # header), then all data rows from every worker
+  for ip in "$W_PGSH" "$W_VAL" "$W_PGT"; do h=$(merge "$ip" results/sweep.csv | head -1); [ -n "$h" ] && { echo "$h"; break; }; done
   for ip in "$W_PGSH" "$W_VAL" "$W_PGT"; do merge "$ip" results/sweep.csv | tail -n +2; done
 } > "$OUT/sweep.csv"
 merge "$W_VAL" durresults/sweep.csv > "$OUT/durability.csv"  # header + the 3 modes' rows
