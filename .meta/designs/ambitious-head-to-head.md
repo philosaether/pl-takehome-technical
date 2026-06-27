@@ -2,6 +2,9 @@
 Status: accepted
 Date: 2026-06-27
 Accepted: 2026-06-27
+Implemented: 2026-06-27 (feature/ambitious-head-to-head) — multi-DSN PG router (conformance 8/8 at 1+2 shards), PLQ_RESET gate, terraform topology, orchestration scripts, plot faceting; ran on AWS as run-cloud-2.
+Divergences: AWS 32-vCPU quota forced m5.large / 4 shards (not m5.xlarge / 8); 3 parallel tracks became sequential (fail-loud, after the parallel-wait swallowed errors); 7 deployment bugs fixed (see decisions 2026-06-27). Results: results/run-cloud-2/.
+Deferred: the 8-shard point (quota bump → TF_VAR_pg_count=8 TF_VAR_valkey_count=8 + m5.xlarge/m5.2xlarge) and the durability off/everysec/always curve (CONFIG SET fixed to sudo docker exec; failed this run). Both are one quota-bumped rerun away.
 Assessment: results/run-cloud-1/results.md (the run this upgrades)
 Supersedes: (none — extends loadgen-and-proofs.md + valkey-driver.md)
 ---

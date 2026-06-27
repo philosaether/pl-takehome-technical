@@ -65,11 +65,13 @@ Current work state. Update constantly, delete items when done.
     pool, pg_tuned, valkey_count=8, worker/producer runner pools) → (4) orchestration
     scripts + plot.py faceting → (5) local dry-run (conformance + thin 2-shard smoke)
     → (6) gated cloud apply → run-cloud-2 → teardown.
-  - **Status: BUILT + locally verified — steps 1-5 done (`7b7488a`→`f4ee0b0`).**
-    Router conformance 8/8 at 1 & 2 shards; isolated-topology dry-run green
-    (shards=2, saturated at w=1); terraform plan = 28 resources; plot faceting +
-    sharded sweep verified. **GATED on step 6: `make cloud-up` → run-cloud-2.sh →
-    `make cloud-down` (~$6-7, the only spend; awaiting go).**
+  - **Status: DONE — run-cloud-2 ran on AWS 2026-06-27.** Quota-constrained to 32
+    vCPU → m5.large / 4 shards. Result: PG ×1/2/4 = 2.2k/3.7k/6.5k, tuned ~10k,
+    valkey ×1/2/4 = 33k/70k/142k (both shard ~linearly; valkey ~15× per primary).
+    Artifacts + caveats: `results/run-cloud-2/`. 7 deployment bugs fixed along the way.
+    **Two follow-ups (quota-bump rerun, code already supports):** the 8-shard point
+    (m5.xlarge, `TF_VAR_pg_count=8 TF_VAR_valkey_count=8`) + the durability curve
+    (CONFIG SET now uses `sudo docker exec`). Branch `feature/ambitious-head-to-head`.
 
 - **M1 Postgres driver — DONE, merged to `main`.** All 8 methods; conformance 8/8;
   per-head flush. `postgres-driver.md` accepted+reconciled. (`talking-points.md`

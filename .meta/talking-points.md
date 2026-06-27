@@ -84,3 +84,22 @@ answer to "what's the migration worth": ~15× at one shard, ~53× at four, and t
 slope says it keeps going. The cost-mode runs add the kicker — at 1000 workers PG
 can't even keep them fed (stalls at ~1.4k while Valkey hits the ~50k work ceiling).
 Full data + charts: `.meta/assessments/m3-head-to-head/`.
+
+## Sharded both backends: PG shards linearly too — but Valkey is ~15× per primary
+
+run-cloud-2 settled the obvious rebuttal to run-cloud-1 ("just shard your Postgres").
+We sharded BOTH backends through the *same* hash(workspace)%N router (a multi-DSN PG
+router mirroring the Valkey one) and measured 1/2/4 shards each. Result (zero-process
+peak acks/s, AWS m5.large, quota-constrained to 4 shards):
+
+| postgres×1 | ×2 | ×4 | postgres-tuned | valkey×1 | ×2 | ×4 |
+|-----------|----|----|---------------|---------|----|----|
+| 2.2k | 3.7k | 6.5k | 10k | 33k | 70k | 142k |
+
+Both shard ~linearly (the fair-comparison payoff). But the per-primary gap is the
+whole story: **one Valkey primary (~33k) ≈ five sharded Postgres primaries (×4) ≈
+3× a tuned Postgres**. Matching Valkey×4 would take ~20+ PG primaries — 20+ databases
+to run, back up, fail over, and route across, vs 4 Valkey nodes. And tuned PG, while
+4.5× stock at low concurrency, *declines* as workers climb (claim contention) — it
+never reaches even Valkey×1. The senior point: sharding Postgres is real but buys a
+linear factor on a base that's ~15× too low; the engine, not the topology, is the lever.
