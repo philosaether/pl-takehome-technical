@@ -121,9 +121,13 @@ func runLoadrun(ctx context.Context, be queue.Backend, cfg config.Config) {
 	if err := os.MkdirAll(cfg.ResultsDir, 0o755); err != nil {
 		log.Fatalf("results dir: %v", err)
 	}
-	if r, ok := be.(queue.Resetter); ok {
-		if err := r.Reset(ctx); err != nil {
-			log.Fatalf("reset: %v", err)
+	// PLQ_RESET=false skips the wipe — the isolated topology (external loadgen
+	// boxes own the queue) must not have its standing depth cleared between points.
+	if cfg.Reset {
+		if r, ok := be.(queue.Resetter); ok {
+			if err := r.Reset(ctx); err != nil {
+				log.Fatalf("reset: %v", err)
+			}
 		}
 	}
 	label := processLabel(cfg.Process)
@@ -145,8 +149,8 @@ func runLoadrun(ctx context.Context, be queue.Backend, cfg config.Config) {
 	if err != nil {
 		log.Fatalf("loadrun: %v", err)
 	}
-	res.Backend = cfg.Backend       // the head-to-head series key
-	res.Shards = shardCount(cfg)    // the linearity-sweep series key (valkey 1/2/4; PG/memory = 1)
+	res.Backend = cfg.Backend    // the head-to-head series key
+	res.Shards = shardCount(cfg) // the linearity-sweep series key (valkey 1/2/4; PG/memory = 1)
 	appendSweepRow(cfg.ResultsDir, res)
 	log.Printf("result: throughput=%.0f acks/s loop_p99=%s claim_p99=%s saturated=%t backlog=[%d,%d] acked=%d lease_exp=%d",
 		res.Throughput, res.LoopP99, res.ClaimP99, res.Saturated, res.MinBacklog, res.MaxBacklog, res.Acked, res.LeaseExp)
@@ -155,22 +159,28 @@ func runLoadrun(ctx context.Context, be queue.Backend, cfg config.Config) {
 	}
 }
 
-// shardCount derives the Valkey shard count from the configured addr list (one
-// addr per primary). PG/memory have no addr list → a single logical primary (1),
-// which is the honest series label for the head-to-head.
+// shardCount derives the shard count from the active backend's address list — the
+// comma-separated PLQ_VALKEY_ADDR (valkey) or PLQ_POSTGRES_DSN (postgres), one
+// entry per primary. Only one is populated (the driver is build-tag selected), so
+// summing both yields the active count. Memory / unset → a single logical primary.
 //
-// NOTE: the Makefile's sweep-valkey recomputes the same count for its progress
-// log (`tr ',' '\n' | grep -c .`). Keep the two in sync — a divergence would make
-// the logged shard count disagree with the `shards` column this writes to the CSV.
+// NOTE: the Makefile's sweep-{valkey,postgres} recompute the same count for their
+// progress log (`tr ',' '\n' | grep -c .`). Keep the two in sync — a divergence
+// would make the logged shard count disagree with the `shards` column written here.
 func shardCount(cfg config.Config) int {
+	n := countAddrs(cfg.ValkeyAddr) + countAddrs(cfg.PostgresDSN)
+	if n == 0 {
+		return 1
+	}
+	return n
+}
+
+func countAddrs(list string) int {
 	n := 0
-	for _, a := range strings.Split(cfg.ValkeyAddr, ",") {
+	for _, a := range strings.Split(list, ",") {
 		if strings.TrimSpace(a) != "" {
 			n++
 		}
-	}
-	if n == 0 {
-		return 1
 	}
 	return n
 }

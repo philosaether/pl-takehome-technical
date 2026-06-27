@@ -51,6 +51,7 @@ type Config struct {
 	ResultsDir string
 	Chaos      bool          // PLQ_CHAOS: crash+respawn workers during the run
 	ChaosEvery time.Duration // PLQ_CHAOS_EVERY: chaos kill interval
+	Reset      bool          // PLQ_RESET: wipe the backend at loadrun start (false = external producers own the data)
 }
 
 // Load reads configuration from PLQ_* env vars, applying defaults.
@@ -89,6 +90,7 @@ func Load() Config {
 		ResultsDir: env("PLQ_RESULTS", "./results"),
 		Chaos:      boolenv("PLQ_CHAOS", false),
 		ChaosEvery: dur("PLQ_CHAOS_EVERY", 5*time.Second),
+		Reset:      boolenv("PLQ_RESET", true), // default true = back-compat; isolated worker boxes set false
 	}
 }
 
