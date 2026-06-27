@@ -1,0 +1,7 @@
+backend,shards,workers,process,throughput_acks_s,claim_p99_ms,loop_p99_ms,loop_samples,min_backlog,max_backlog,saturated,enqueued,acked,lease_expired
+valkey-off,1,100,zero,37657,50.00,200.00,0,566,5754,true,0,755259,0
+valkey-off,1,1000,zero,23469,100.00,1000.00,0,0,1205,false,0,477746,0
+valkey-everysec,1,100,zero,37593,50.00,200.00,0,643,5808,true,0,751001,0
+valkey-everysec,1,1000,zero,23867,50.00,1000.00,0,0,0,false,0,485174,0
+valkey-always,1,100,zero,38074,50.00,200.00,0,423,5914,true,0,756154,0
+valkey-always,1,1000,zero,23731,100.00,1000.00,0,0,1226,false,0,487470,0

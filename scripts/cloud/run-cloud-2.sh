@@ -1,0 +1,172 @@
+#!/usr/bin/env bash
+# Coordinator for the run-cloud-2 head-to-head (runs on the laptop). Assumes the
+# boxes are already provisioned (`make cloud-up` with TF_VAR_pg_count=8
+# TF_VAR_valkey_count=8) and AWS_PROFILE is set. Builds both binaries, distributes
+# them + the per-box scripts, runs the three tracks in parallel (PG-sharded ‖ Valkey
+# ‖ PG-tuned), runs the durability tail, then merges every worker's sweep.csv into
+# results/run-cloud-2/ and graphs (faceted by process model).
+#
+#   AWS_PROFILE=praxis scripts/cloud/run-cloud-2.sh
+#
+# GATED upstream: the spend is the `make cloud-up` that precedes this. This script
+# only drives the already-running boxes; `make cloud-down` tears them down after.
+set -euo pipefail
+
+TFDIR=deploy/terraform
+SSH="ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=4"
+USER=ec2-user
+OUT=results/run-cloud-2
+mkdir -p "$OUT"
+
+# Sweep matrix (override for a cheap SMOKE: WORKERS_ARG="1 10" PROCS_ARG=zero DUR_ARG=5s WARM_ARG=2s).
+WORKERS_ARG="${WORKERS_ARG:-1 10 30 100 300 1000}"
+PROCS_ARG="${PROCS_ARG:-zero 2ms 20ms 200ms}"
+DUR_ARG="${DUR_ARG:-20s}"
+WARM_ARG="${WARM_ARG:-8s}"
+
+tf() { terraform -chdir="$TFDIR" output -raw "$1"; }
+tflist() { terraform -chdir="$TFDIR" output -json "$1" | tr -d '[]" ' | tr ',' '\n' | grep .; }
+
+echo "=== reading terraform outputs ==="
+# NB: plain array assignment (not mapfile) — macOS ships bash 3.2, no mapfile. IPs
+# are whitespace-free so default-IFS word splitting on the newline list is safe.
+# shellcheck disable=SC2207
+WORKERS=($(tflist worker_runner_ips))     # [0]=pg-sharded [1]=pg-tuned [2]=valkey
+# shellcheck disable=SC2207
+PRODUCERS=($(tflist producer_runner_ips)) # split across the 3 tracks (see below)
+PG1=$(tf pg_addrs_1);  PG2=$(tf pg_addrs_2);  PG4=$(tf pg_addrs_4);  PG8=$(tf pg_addrs_8)
+PGT=$(tf pg_tuned_dsn)
+V1=$(tf valkey_addrs_1); V2=$(tf valkey_addrs_2); V4=$(tf valkey_addrs_4); V8=$(tf valkey_addrs_8)
+# shellcheck disable=SC2207
+PG_PRIV=($(tflist pg_private_ips))
+# shellcheck disable=SC2207
+VAL_PRIV=($(tflist valkey_private_ips))
+# shellcheck disable=SC2207
+VAL_PUB=($(tflist valkey_public_ips))   # for the durability tail's live CONFIG SET
+PGT_PRIV=$(tf pg_tuned_private_ip)
+
+# Fail fast with a clear message if a pool came up short (vs a cryptic set -u unbound).
+[ "${#WORKERS[@]}"   -ge 3 ] || { echo "ERROR: need 3 worker runners, got ${#WORKERS[@]}" >&2; exit 1; }
+[ "${#PRODUCERS[@]}" -ge 4 ] || { echo "ERROR: need >=4 producer runners, got ${#PRODUCERS[@]}" >&2; exit 1; }
+[ "${#VAL_PUB[@]}"   -ge 1 ] || { echo "ERROR: no valkey public IPs (durability needs one)" >&2; exit 1; }
+
+W_PGSH=${WORKERS[0]}; W_PGT=${WORKERS[1]}; W_VAL=${WORKERS[2]}
+# Producer assignment adapts to the pool size: 6 (full run) → pg-sharded 2 / tuned 1 /
+# valkey 3; 4 (quota-constrained run) → pg-sharded 1 / tuned 1 / valkey 2 (valkey is
+# the fast one, so it gets the spare producer either way).
+if [ "${#PRODUCERS[@]}" -ge 6 ]; then
+  P_PGSH="${PRODUCERS[0]},${PRODUCERS[1]}"; P_PGT="${PRODUCERS[2]}"; P_VAL="${PRODUCERS[3]},${PRODUCERS[4]},${PRODUCERS[5]}"
+else
+  P_PGSH="${PRODUCERS[0]}"; P_PGT="${PRODUCERS[1]}"; P_VAL="${PRODUCERS[2]},${PRODUCERS[3]}"
+fi
+
+echo "=== building static linux binaries ==="
+GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -tags postgres -o /tmp/plq-postgres ./cmd/plq
+GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -tags valkey   -o /tmp/plq-valkey   ./cmd/plq
+
+ship() { # ship <ip> <backend-binary>
+  scp -q -o StrictHostKeyChecking=accept-new \
+    "/tmp/plq-$2" scripts/cloud/subsweep.sh scripts/cloud/producers.sh "$USER@$1:" 2>/dev/null
+  $SSH "$USER@$1" "chmod +x plq-$2 subsweep.sh producers.sh"
+}
+wait_ssh() { # block until SSH answers on each box (fresh instances boot ~30s)
+  for ip in "$@"; do
+    local ok=0
+    for i in $(seq 1 40); do $SSH "$USER@$ip" true 2>/dev/null && { ok=1; break; }; sleep 5; done
+    [ "$ok" = 1 ] || { echo "ERROR: SSH never became ready on $ip (gave up after ~200s)" >&2; return 1; }
+  done
+}
+wait_ports() { # wait_ports <worker_ip> <host:port...> — all open, polled from the worker box
+  local wip=$1; shift
+  $SSH "$USER@$wip" "for i in \$(seq 1 72); do ok=1; for hp in $*; do h=\${hp%:*}; p=\${hp#*:}; (exec 3<>/dev/tcp/\$h/\$p) 2>/dev/null || ok=0; done; [ \$ok = 1 ] && exit 0; sleep 5; done; exit 1"
+}
+
+echo "=== waiting for runner SSH ==="
+wait_ssh "${WORKERS[@]}" "${PRODUCERS[@]}"
+
+echo "=== distributing binaries + scripts ==="
+# Ship per the (count-adaptive) role assignment, not raw indices — the producer
+# pool may be 4 (constrained) or 6 (full). ${P_*//,/ } splits the CSV for the loop.
+for ip in "$W_PGSH" "$W_PGT" ${P_PGSH//,/ } ${P_PGT//,/ }; do ship "$ip" postgres; done
+for ip in "$W_VAL" ${P_VAL//,/ }; do ship "$ip" valkey; done
+
+echo "=== waiting for datastores (up to ~6min; postgres:16 pulls on fresh boxes) ==="
+wait_ports "$W_PGSH" "$(printf '%s:5432 ' "${PG_PRIV[@]}")"  && echo "  PG pool ready"
+wait_ports "$W_VAL"  "$(printf '%s:6379 ' "${VAL_PRIV[@]}")" && echo "  valkey pool ready"
+wait_ports "$W_PGT"  "$PGT_PRIV:5432"                        && echo "  tuned PG ready"
+
+echo "=== clearing prior results on worker boxes (clean re-runs) ==="
+for wip in "$W_PGSH" "$W_VAL" "$W_PGT"; do
+  $SSH "$USER@$wip" "rm -rf results durresults; mkdir -p results"
+done
+
+connvar() { [ "$1" = postgres ] && echo PLQ_POSTGRES_DSN || echo PLQ_VALKEY_ADDR; }
+
+# run_track <backend> <label> <worker_ip> <producer_ips_csv> <conn...>
+# Per shard count: reset → start producers → prime → sub-sweep → stop producers.
+run_track() {
+  local backend=$1 label=$2 wip=$3 pcsv=$4; shift 4
+  local cvar; cvar=$(connvar "$backend")
+  IFS=, read -ra pips <<< "$pcsv"
+  local last=""
+  for conn in "$@"; do
+    [ "$conn" = "$last" ] && continue  # pool < requested shard count → skip the dup (e.g. ×8==×4 at 4 boxes)
+    last="$conn"
+    local shards; shards=$(echo "$conn" | tr ',' '\n' | grep -c .)
+    echo "--- [$label] shards=$shards: reset → producers → sweep ---"
+    $SSH "$USER@$wip" "env PLQ_BACKEND=$backend $cvar='$conn' ./plq-$backend reset"
+    for pip in "${pips[@]}"; do
+      # </dev/null so the backgrounded producer doesn't hold the ssh channel open
+      $SSH "$USER@$pip" "pkill -x plq-$backend || true; nohup ./producers.sh $backend '$conn' 256 </dev/null >producers.log 2>&1 &"
+    done
+    $SSH "$USER@$wip" "sleep 10"  # prime the queue past the worker's appetite
+    $SSH "$USER@$wip" "./subsweep.sh $backend $label '$conn' '$WORKERS_ARG' '$PROCS_ARG' $DUR_ARG $WARM_ARG"
+    for pip in "${pips[@]}"; do $SSH "$USER@$pip" "pkill -x plq-$backend || true"; done
+  done
+}
+
+# Best-effort from here: a track/datastore failure must NOT abort before the merge,
+# or we'd lose everything that already ran (and auto-teardown would take the boxes).
+# Each track is pulled by the final merge regardless of who failed.
+set +e
+echo "=== running tracks (best-effort; merge always runs) ==="
+run_track postgres postgres       "$W_PGSH" "$P_PGSH" "$PG1" "$PG2" "$PG4" "$PG8" || echo "WARN: pg-sharded track failed"
+run_track valkey   valkey         "$W_VAL"  "$P_VAL"  "$V1"  "$V2"  "$V4"  "$V8"  || echo "WARN: valkey track failed"
+run_track postgres postgres-tuned "$W_PGT"  "$P_PGT"  "$PGT"                      || echo "WARN: pg-tuned track failed"
+echo "=== all tracks done ==="
+
+echo "=== durability tail (valkey×1, process=0, fsync off/everysec/always) ==="
+# valkey×1 = the valkey[0] box. CONFIG SET goes to its PUBLIC IP (the private addr
+# isn't reachable from the laptop); the worker/producer use the private addr.
+DUR_ADDR="$V1"; DUR_PROD="${P_VAL%%,*}"; DUR_PUB="${VAL_PUB[0]}"
+for mode in off everysec always; do
+  case "$mode" in
+    off)      sets=("appendonly no") ;;
+    everysec) sets=("appendonly yes" "appendfsync everysec") ;;
+    always)   sets=("appendonly yes" "appendfsync always") ;;
+  esac
+  for s in "${sets[@]}"; do
+    $SSH "$USER@$DUR_PUB" "sudo docker exec valkey valkey-cli CONFIG SET $s" || echo "  WARN: CONFIG SET $s failed"
+  done
+  $SSH "$USER@$W_VAL" "pkill -x plq-valkey || true; env PLQ_BACKEND=valkey PLQ_VALKEY_ADDR='$DUR_ADDR' ./plq-valkey reset"
+  $SSH "$USER@$DUR_PROD" "pkill -x plq-valkey || true; nohup ./producers.sh valkey '$DUR_ADDR' 256 </dev/null >producers.log 2>&1 &"
+  # durability writes to its OWN results dir (PLQ_RESULTS) so it never clobbers the
+  # valkey track's sweep.csv on this shared worker box; appends across the 3 modes.
+  $SSH "$USER@$W_VAL" "sleep 10; PLQ_RESULTS=durresults ./subsweep.sh valkey valkey-$mode '$DUR_ADDR' '100 1000' 'zero' $DUR_ARG $WARM_ARG"
+  $SSH "$USER@$DUR_PROD" "pkill -x plq-valkey || true"
+done
+
+echo "=== merge + graph ==="
+merge() { # merge <ip> <remote-path>  → append rows (header once) to $1-collected
+  $SSH "$USER@$1" "cat $2" 2>/dev/null
+}
+{ # header from the FIRST worker that produced data (a failed track must not cost the
+  # header), then all data rows from every worker
+  for ip in "$W_PGSH" "$W_VAL" "$W_PGT"; do h=$(merge "$ip" results/sweep.csv | head -1); [ -n "$h" ] && { echo "$h"; break; }; done
+  for ip in "$W_PGSH" "$W_VAL" "$W_PGT"; do merge "$ip" results/sweep.csv | tail -n +2; done
+} > "$OUT/sweep.csv"
+merge "$W_VAL" durresults/sweep.csv > "$OUT/durability.csv"  # header + the 3 modes' rows
+
+python3 scripts/plot.py "$OUT"
+echo "=== done — results in $OUT/ ==="
+echo "Remember: make cloud-down"

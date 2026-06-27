@@ -39,10 +39,11 @@ That identity is what makes the head-to-head a fair fight.
 | `internal/memory` | In-memory `Backend` — dev, CI typecheck, **correctness oracle**. | **real** |
 | `internal/config` | Volatility-split tunables from `PLQ_*` env; projects `WorkerConfig`. | **real** |
 | `internal/loadgen` | Zipfian-churn producers, the `loadrun` harness, metrics (`queue.Recorder`), chaos. `Result`/`sweep.csv` carry a `shards` dimension (the head-to-head series key, with `backend`). | **real** |
-| `internal/postgres` | Path 1 driver — all 8 methods + `Stater`/`Resetter`. | **real** |
+| `internal/postgres` | Path 1 driver — all 8 methods + `Stater`/`Resetter`; **multi-DSN N-shard routing by `hash(workspace)%N`** (run-cloud-2), the same router shape as valkey. | **real** |
 | `internal/valkey` | Path 2 driver — Streams+ZSET+Hash+Lua via rueidis; all 8 methods + `Stater`/`Resetter`; N-shard routing by workspace. | **real** |
 | `cmd/plq` | CLI (`worker\|loadgen\|loadrun\|reap\|reset`) + build-tagged `newBackend`. | **real** |
-| `tests/conformance` | The contract suite (8 scenarios) run vs memory + PG + Valkey. | **real** |
+| `scripts/cloud` | run-cloud-2 orchestration: `run-cloud-2.sh` (laptop coordinator), `subsweep.sh` (worker box, isolated `PLQ_PRODUCERS=0` loop), `producers.sh` (producer box, continuous loadgen). | **real** |
+| `tests/conformance` | The contract suite (8 scenarios) run vs memory + PG (1+N shards) + Valkey. | **real** |
 | `tests/proofs` | Ordering-under-crash (correctness) + the `claimRetry` harness. | **real** |
 | `tests/bench` | Look-ahead scaling bench (its own binary; PG-gated). | **real** |
 
@@ -99,11 +100,12 @@ Gate: a unit is claimable only when `pendingCost ≥ threshold` **or** flush-pro
 - `make build | test | vet | proofs`; `make up` (postgres path) / `make up-valkey`
   (4 local Valkey instances for the shard sweep); `make load-test` /
   `load-test-valkey` / `head-to-head` (the M2/M3 sweep + graph — real).
-- **Cloud:** `deploy/terraform` provisions the canonical AWS boxes — `pg` + `worker`
-  + `producer` + N `valkey` primaries (`count = var.valkey_count`); `make cloud-up`/
-  `cloud-down` are the gated apply/destroy. Benchmark outputs land in `results/`,
-  tracked as per-run buckets (`run-cloud-N/`, `run-local-N/`, `lookahead/`; see
-  `results/README.md`).
+- **Cloud:** `deploy/terraform` provisions the AWS boxes; `make cloud-up`/`cloud-down`
+  are the gated apply/destroy. run-cloud-1 (M3) = `pg` + `worker` + `producer` + N
+  `valkey`. run-cloud-2 = the sharded head-to-head: a sharded-PG pool (`var.pg_count`)
+  + tuned-PG + valkey pool + split worker/producer runner pools, driven by
+  `scripts/cloud/run-cloud-2.sh`. Outputs land in `results/`, tracked as per-run
+  buckets (`run-cloud-N/`, `run-local-N/`, `lookahead/`; see `results/README.md`).
 
 ## Milestones (all landed)
 
@@ -115,4 +117,8 @@ Gate: a unit is claimable only when `pendingCost ≥ threshold` **or** flush-pro
 - **M3 (Valkey + head-to-head):** `internal/valkey` (Streams + ZSETs + Lua via
   rueidis), shard by `workspace`; the head-to-head sweep adds the `shards` series
   dimension + terraform Valkey provisioning, run on cloud (`results/run-cloud-1/`).
-  Next: the ambitious run (`designs/ambitious-head-to-head.md`).
+- **run-cloud-2 (ambitious head-to-head):** the multi-DSN PG router (shard PG like
+  valkey) + tuned-PG + isolated/saturated topology + `scripts/cloud/` orchestration;
+  ran quota-constrained (4-shard, m5.large) — `results/run-cloud-2/`. Both backends
+  shard ~linearly; valkey ~15× per primary. 8-shard + durability deferred (see
+  `designs/ambitious-head-to-head.md` + `enhancements.md`).

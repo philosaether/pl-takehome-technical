@@ -51,16 +51,27 @@ Current work state. Update constantly, delete items when done.
   found+fixed live (compose PG port 5432→5433; pg root volume 8→20 GiB). `results/` now
   tracked as per-run buckets. Cloud torn down, ≪$1.
 
-- **Next milestone — the ambitious data run (run-cloud-2, `feature/ambitious-head-to-head`).**
-  Design drafted + accepted approach: `designs/ambitious-head-to-head.md`. Upgrades the
+- **ACTIVE — the ambitious data run (run-cloud-2, `feature/ambitious-head-to-head`).**
+  Design ACCEPTED 2026-06-27: `designs/ambitious-head-to-head.md`. Upgrades the
   head-to-head to airtight — isolated/saturated topology (worker-alone + external
-  loadgen, `PLQ_PRODUCERS=0` + a new `PLQ_RESET` gate), 1/2/4/**8** shards, a **tuned-PG**
-  baseline, a **durability tradeoff** curve (fsync off/everysec/always), the full process
-  sweep 0/2/20/200ms, and $/throughput + p99-at-knee analysis. Middle orchestration
-  (PG-stock+PG-tuned parallel; Valkey shards sequential on a shared 8-box pool), ~17
-  boxes, ~30 min, ~$3-4. **Build: the `PLQ_RESET` gate + terraform (pg_tuned, valkey_count=8,
-  generic runner pool) + orchestration scripts; dry-run the isolated topology locally
-  before the gated apply.**
+  loadgen, `PLQ_PRODUCERS=0` + a `PLQ_RESET` gate), **both** backends sharded 1/2/4/8
+  via one `hash(workspace)%N` router (a new **multi-DSN PG router** mirroring Valkey),
+  a **tuned-PG** baseline, a **durability tradeoff** curve, the full process sweep
+  0/2/20/200ms, $/throughput + p99-at-knee. 9 configs / 216 points; 3 parallel tracks;
+  26 boxes, ~45 min, ~$6-7.
+  - **Build order (router-first):** (1) multi-DSN PG router in `internal/postgres` +
+    **conformance 8/8 vs a 2-shard PG** (the correctness gate, done first/free) →
+    (2) `PLQ_RESET` gate + `shardCount` PG-DSN extension → (3) terraform (pg_count=8
+    pool, pg_tuned, valkey_count=8, worker/producer runner pools) → (4) orchestration
+    scripts + plot.py faceting → (5) local dry-run (conformance + thin 2-shard smoke)
+    → (6) gated cloud apply → run-cloud-2 → teardown.
+  - **Status: DONE — run-cloud-2 ran on AWS 2026-06-27.** Quota-constrained to 32
+    vCPU → m5.large / 4 shards. Result: PG ×1/2/4 = 2.2k/3.7k/6.5k, tuned ~10k,
+    valkey ×1/2/4 = 33k/70k/142k (both shard ~linearly; valkey ~15× per primary).
+    Artifacts + caveats: `results/run-cloud-2/`. 7 deployment bugs fixed along the way.
+    **Two follow-ups (quota-bump rerun, code already supports):** the 8-shard point
+    (m5.xlarge, `TF_VAR_pg_count=8 TF_VAR_valkey_count=8`) + the durability curve
+    (CONFIG SET now uses `sudo docker exec`). Branch `feature/ambitious-head-to-head`.
 
 - **M1 Postgres driver — DONE, merged to `main`.** All 8 methods; conformance 8/8;
   per-head flush. `postgres-driver.md` accepted+reconciled. (`talking-points.md`

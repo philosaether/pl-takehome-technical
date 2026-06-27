@@ -9,18 +9,27 @@
 services:
   postgres:
     image: postgres:16
-    environment:
+    environment: &pg-env
       POSTGRES_PASSWORD: plq
       POSTGRES_USER: plq
       POSTGRES_DB: plq
     ports:
       - "5433:5432"   # host 5433 = the Makefile default DSN (dodges a stock local PG on 5432);
                       # the containerized worker/loadgen still reach it as postgres:5432 over the network
-    healthcheck:
+    healthcheck: &pg-healthcheck
       test: ["CMD-SHELL", "pg_isready -U plq"]
       interval: 2s
       timeout: 3s
       retries: 20
+
+  # Second PG primary for the local sharded-PG smoke + the 2-shard conformance gate
+  # (run-cloud-2's multi-DSN router). Same config; host 5434.
+  postgres-2:
+    image: postgres:16
+    environment: *pg-env
+    ports:
+      - "5434:5432"
+    healthcheck: *pg-healthcheck
 
   worker:
     build:

@@ -20,15 +20,12 @@ except ImportError:
     sys.exit("matplotlib not installed — run: pip install matplotlib")
 
 
-def label_for(backend, shards, proc):
-    """Series label. With a backend column (M3 head-to-head), prefix it so PG and
-    Valkey curves are distinguishable; with shards>1 (the Valkey linearity sweep),
-    append ×N so the 1/2/4-shard curves separate. Single-shard and legacy
-    single-backend runs stay uncluttered."""
+def config_label(backend, shards):
+    """Series label for the faceted charts (process is the facet, in the title):
+    `postgres` / `postgres-tuned` / `valkey×4`. Legacy no-backend CSVs → "series"."""
     if not backend:
-        return f"process={proc}"
-    tag = f"{backend}×{shards}" if shards > 1 else backend
-    return f"{tag} process={proc}"
+        return "series"
+    return f"{backend}×{shards}" if shards > 1 else backend
 
 
 def _shards(row):
@@ -39,81 +36,65 @@ def _shards(row):
         return 1
 
 
-def plot_throughput(results_dir):
-    path = os.path.join(results_dir, "sweep.csv")
-    if not os.path.exists(path):
-        print(f"skip throughput: {path} not found")
-        return
-    # group throughput by (backend, process) → [(workers, throughput, saturated)].
-    # The backend key overlays the PG vs Valkey head-to-head on one axis (M3).
-    series = defaultdict(list)
+def _read_facets(path, value_col, skip_nonpositive):
+    """sweep.csv → {process: {(backend, shards): [(workers, value, saturated)]}}."""
+    facets = defaultdict(lambda: defaultdict(list))
     with open(path) as f:
         for row in csv.DictReader(f):
-            series[(row.get("backend", ""), _shards(row), row["process"])].append(
-                (int(row["workers"]), float(row["throughput_acks_s"]), row["saturated"] == "true")
+            v = float(row[value_col])
+            if skip_nonpositive and v <= 0:  # log scale can't plot 0
+                continue
+            facets[row["process"]][(row.get("backend", ""), _shards(row))].append(
+                (int(row["workers"]), v, row["saturated"] == "true")
             )
-    fig, ax = plt.subplots(figsize=(8, 5))
-    for (backend, shards, proc), pts in sorted(series.items()):
-        pts.sort()
-        xs = [w for w, _, _ in pts]
-        ys = [t for _, t, _ in pts]
-        ax.plot(xs, ys, marker="o", label=label_for(backend, shards, proc))
-        # mark non-saturated points (the number may be load-gen-bound)
-        for w, t, sat in pts:
-            if not sat:
-                ax.annotate("unsat", (w, t), fontsize=7, color="red")
-    ax.set_xscale("log")
-    ax.set_xlabel("workers")
-    ax.set_ylabel("throughput (acks/s)")
-    ax.set_title("Throughput vs workers")
-    ax.legend()
-    ax.grid(True, which="both", alpha=0.3)
-    out = os.path.join(results_dir, "throughput.png")
-    fig.savefig(out, dpi=120, bbox_inches="tight")
-    print("wrote", out)
+    return facets
+
+
+def _facet_plot(results_dir, value_col, ylabel, title, prefix, ylog, skip_nonpositive=False):
+    """One chart per process model — 9 configs × 4 process is too dense for a single
+    axis, so process is the facet (in the title + filename). Writes
+    <prefix>-<process>.png; the process=zero chart is the headline."""
+    path = os.path.join(results_dir, "sweep.csv")
+    if not os.path.exists(path):
+        print(f"skip {prefix}: {path} not found")
+        return
+    facets = _read_facets(path, value_col, skip_nonpositive)
+    if not facets:
+        print(f"skip {prefix}: no samples")
+        return
+    for proc, series in sorted(facets.items()):
+        fig, ax = plt.subplots(figsize=(8, 5))
+        for (backend, shards), pts in sorted(series.items()):
+            pts.sort()
+            xs = [w for w, _, _ in pts]
+            ys = [v for _, v, _ in pts]
+            ax.plot(xs, ys, marker="o", label=config_label(backend, shards))
+            for w, v, sat in pts:  # mark load-gen-bound points
+                if not sat:
+                    ax.annotate("unsat", (w, v), fontsize=7, color="red")
+        ax.set_xscale("log")
+        if ylog:
+            ax.set_yscale("log")
+        ax.set_xlabel("workers")
+        ax.set_ylabel(ylabel)
+        ax.set_title(f"{title} — process={proc}")
+        ax.legend()
+        ax.grid(True, which="both", alpha=0.3)
+        out = os.path.join(results_dir, f"{prefix}-{proc}.png")
+        fig.savefig(out, dpi=120, bbox_inches="tight")
+        print("wrote", out)
+
+
+def plot_throughput(results_dir):
+    _facet_plot(results_dir, "throughput_acks_s", "throughput (acks/s)",
+                "Throughput vs workers", "throughput", ylog=False)
 
 
 def plot_latency(results_dir):
-    """loop_p99 vs workers — the latency companion to the throughput plateau.
-    Past saturation, throughput flattens while this climbs (workers contend on
-    claims/acks). In zero-work mode this is the queue's own loop overhead; in
-    cost mode it's dominated by the simulated work (read it in the M3 PG-vs-Valkey
-    comparison, where that cancels)."""
-    path = os.path.join(results_dir, "sweep.csv")
-    if not os.path.exists(path):
-        print(f"skip latency: {path} not found")
-        return
-    series = defaultdict(list)
-    with open(path) as f:
-        for row in csv.DictReader(f):
-            p99 = float(row["loop_p99_ms"])
-            if p99 <= 0:  # log scale can't plot 0 (no samples at that point)
-                continue
-            series[(row.get("backend", ""), _shards(row), row["process"])].append(
-                (int(row["workers"]), p99, row["saturated"] == "true")
-            )
-    if not series:
-        print("skip latency: no loop_p99 samples")
-        return
-    fig, ax = plt.subplots(figsize=(8, 5))
-    for (backend, shards, proc), pts in sorted(series.items()):
-        pts.sort()
-        xs = [w for w, _, _ in pts]
-        ys = [p for _, p, _ in pts]
-        ax.plot(xs, ys, marker="o", label=label_for(backend, shards, proc))
-        for w, p, sat in pts:
-            if not sat:
-                ax.annotate("unsat", (w, p), fontsize=7, color="red")
-    ax.set_xscale("log")
-    ax.set_yscale("log")
-    ax.set_xlabel("workers")
-    ax.set_ylabel("loop p99 (ms)")
-    ax.set_title("Loop-latency p99 vs workers (claim→drain→process→ack)")
-    ax.legend()
-    ax.grid(True, which="both", alpha=0.3)
-    out = os.path.join(results_dir, "latency.png")
-    fig.savefig(out, dpi=120, bbox_inches="tight")
-    print("wrote", out)
+    """loop_p99 vs workers — the latency companion to the throughput plateau. Past
+    saturation throughput flattens while this climbs (workers contend on claims/acks)."""
+    _facet_plot(results_dir, "loop_p99_ms", "loop p99 (ms)",
+                "Loop-latency p99 vs workers", "latency", ylog=True, skip_nonpositive=True)
 
 
 def plot_lookahead(results_dir):

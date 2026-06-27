@@ -400,3 +400,36 @@ dry-ran locally, then ran the gated cloud head-to-head (Phil authorized the spen
   anonymous pulls — worked around with a throwaway `DOCKER_CONFIG` (global config
   untouched). AWS EC2 needs the `praxis`/terraform-admin profile; `default`
   (pb-dev-laptop) lacks ec2 perms.
+
+## 2026-06-27 — ACCEPTED: ambitious head-to-head (run-cloud-2), shard both backends
+
+`/ship` of `designs/ambitious-head-to-head.md` on `feature/ambitious-head-to-head`.
+Upgrades the head-to-head to airtight: isolated/saturated topology (PLQ_PRODUCERS=0
+worker measuring external loadgen + a PLQ_RESET gate); **both** backends sharded
+1/2/4/8 through the SAME hash(workspace)%N router — via a new **multi-DSN Postgres
+router** (mirror of the Valkey backend) so the comparison isolates per-primary engine
+speed from horizontal scaling; tuned-PG baseline; durability tradeoff (fsync
+off/everysec/always); full process sweep 0/2/20/200ms; $/throughput + p99. 9 configs /
+216 points, 3 parallel tracks, 26 boxes, ~45 min, ~$6-7. **Build router-first:** the
+multi-DSN PG router + conformance 8/8 vs a 2-shard PG is the correctness gate, done
+first/locally before any cloud spend. Key bet: ~8 sharded Postgres ≈ 1 Valkey (the
+migration case in one chart, and it preempts "just shard your Postgres").
+
+## 2026-06-27 — run-cloud-2 DONE: sharded head-to-head completed (quota-constrained)
+
+Ran the ambitious head-to-head on AWS. Hit the **32-vCPU quota** → ran m5.large / 4
+shards (not the designed m5.xlarge / 8; the code supports 8 behind a quota bump).
+**Result (zero-process peak):** postgres ×1/2/4 = 2.2k/3.7k/6.5k, postgres-tuned ~10k,
+valkey ×1/2/4 = 33k/70k/142k. Both shard ~linearly; Valkey ~15× per primary; even
+sharded/tuned PG loses by 3–15×. Artifacts + caveats: `results/run-cloud-2/`.
+- **Seven deployment bugs, all fixed** (normal for a 16-box harness): macOS bash 3.2
+  no mapfile; two unbound-index sets (6-vs-4 producer pool); durability ssh'd
+  unreachable private IPs; `pkill -f plq-` self-killed the ssh session (the silent
+  track-death); valkey froze (8 GiB root + RDB bgsave → stop-writes; fixed with
+  `--save ""` + 20 GiB); data-loss-before-merge (made collection best-effort).
+- **Two dimensions not obtained:** the 8-shard point (quota) and durability
+  off/everysec/always (CONFIG SET needed `sudo docker exec`; failed this run, fixed
+  for next). Both are a quota-bump rerun away — `make cloud-up` with
+  `TF_VAR_pg_count=8 TF_VAR_valkey_count=8` + m5.xlarge/m5.2xlarge types.
+- **Total spend across ~5 apply/destroy cycles: a few dollars** (auto-teardown caught
+  every failure fast).

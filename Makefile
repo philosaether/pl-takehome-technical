@@ -14,6 +14,10 @@ PLQ_VALKEY_ADDR ?= localhost:6379
 VALKEY_ADDRS_SWEEP ?= localhost:6379 \
                       localhost:6379,localhost:6380 \
                       localhost:6379,localhost:6380,localhost:6381,localhost:6382
+# Postgres shard sweep: each entry is one PLQ_POSTGRES_DSN (comma-separated primaries)
+# = one shard count, mirroring VALKEY_ADDRS_SWEEP (the sharded-PG router, run-cloud-2).
+# Default is a single DSN (1 shard); override for the local sharded-PG dry run.
+POSTGRES_DSNS_SWEEP ?= $(PLQ_POSTGRES_DSN)
 
 .PHONY: build test proofs proofs-valkey fmt vet images up down up-valkey down-valkey \
         load-test load-test-valkey head-to-head sweep-postgres sweep-valkey graph \
@@ -102,16 +106,20 @@ head-to-head:
 ## sweep-postgres / sweep-valkey: one backend's worker x process sweep, APPENDING to
 ## results/sweep.csv (no clear, no graph) — the reusable unit behind the targets above.
 sweep-postgres:
-	@for n in $(WORKERS_SWEEP); do \
-	  echo ">>> postgres workers=$$n process=zero"; \
-	  PLQ_BACKEND=postgres PLQ_POSTGRES_DSN="$(PLQ_POSTGRES_DSN)" \
-	  PLQ_WORKERS=$$n PLQ_PROCESS=zero PLQ_PRODUCERS=64 PLQ_RESULTS=./results \
-	  $(GO) run -tags postgres ./cmd/plq loadrun ; \
-	  for ms in $(PROCESS_MS); do \
-	    echo ">>> postgres workers=$$n process=$${ms}ms"; \
-	    PLQ_BACKEND=postgres PLQ_POSTGRES_DSN="$(PLQ_POSTGRES_DSN)" \
-	    PLQ_WORKERS=$$n PLQ_PROCESS=cost PLQ_PROCESS_BASE=$${ms}ms PLQ_PRODUCERS=64 PLQ_RESULTS=./results \
+	@for dsns in $(POSTGRES_DSNS_SWEEP); do \
+	  shards=$$(echo $$dsns | tr ',' '\n' | grep -c .); \
+	  : "shards is for the log line only; the CSV column is computed by shardCount() in cmd/plq/main.go — keep in sync"; \
+	  for n in $(WORKERS_SWEEP); do \
+	    echo ">>> postgres shards=$$shards workers=$$n process=zero"; \
+	    PLQ_BACKEND=postgres PLQ_POSTGRES_DSN="$$dsns" \
+	    PLQ_WORKERS=$$n PLQ_PROCESS=zero PLQ_PRODUCERS=64 PLQ_RESULTS=./results \
 	    $(GO) run -tags postgres ./cmd/plq loadrun ; \
+	    for ms in $(PROCESS_MS); do \
+	      echo ">>> postgres shards=$$shards workers=$$n process=$${ms}ms"; \
+	      PLQ_BACKEND=postgres PLQ_POSTGRES_DSN="$$dsns" \
+	      PLQ_WORKERS=$$n PLQ_PROCESS=cost PLQ_PROCESS_BASE=$${ms}ms PLQ_PRODUCERS=64 PLQ_RESULTS=./results \
+	      $(GO) run -tags postgres ./cmd/plq loadrun ; \
+	    done; \
 	  done; \
 	done
 
