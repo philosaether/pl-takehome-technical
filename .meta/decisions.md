@@ -435,3 +435,5 @@ sharded/tuned PG loses by 3–15×. Artifacts + caveats: `results/run-cloud-2/`.
   every failure fast).
 
 2026-06-27: Deferred: /ship unplanned-logic-complexity gate (to philset).
+
+2026-06-27: run-cloud-2 merged to main (102b5ae, --no-ff) + reviewed (Go router clean; 4 shell/doc hardening fixes). Retro → root WORKFLOW.md (harness-is-a-feature; do not reset mid-debug; gated-cloud-run patterns). Enhancement flagged: full 8-shard + durability rerun.
