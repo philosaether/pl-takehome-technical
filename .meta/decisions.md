@@ -437,3 +437,7 @@ sharded/tuned PG loses by 3–15×. Artifacts + caveats: `results/run-cloud-2/`.
 2026-06-27: Deferred: /ship unplanned-logic-complexity gate (to philset).
 
 2026-06-27: run-cloud-2 merged to main (102b5ae, --no-ff) + reviewed (Go router clean; 4 shell/doc hardening fixes). Retro → root WORKFLOW.md (harness-is-a-feature; do not reset mid-debug; gated-cloud-run patterns). Enhancement flagged: full 8-shard + durability rerun.
+
+2026-06-27: Scope change — **start M4 (1-page PDF one-pager), cancel M-PR (Honcho fork PR)**. Tomorrow = demo prep. Session goal: produce the PDF deliverable so Phil emails Vineeth + a repo invite. Branch `feature/one-pager`. Brainstorming before /draft.
+
+2026-06-27: **Shipped `one-pager-construction.md`** (accepted). Build the M4 deliverable: a 1-page LaTeX PDF, two-stage migration framing (growth spine), 3 figures — Fig 1 look-ahead hero (1,364×), Fig 2 the precise cited diff against Honcho's real `get_and_claim_work_units`, Fig 3 the workers×process manifold (render 2-D + 3-D, A/B). Copy in Phil's voice (figs+titles his, body collaborative). Honcho mapping + task-type cost profiles saved to `honcho-fig2-source.md`. Next: LaTeX scaffold + redraw the three figures.
