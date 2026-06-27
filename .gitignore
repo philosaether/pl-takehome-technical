@@ -19,3 +19,10 @@ deploy/terraform/.terraform/
 deploy/terraform/*.tfstate*
 __pycache__/
 *.pyc
+
+# one-pager build: track source (.tex, figures.py, figures/*.pdf, the deliverable
+# PDF), ignore the venv + SII scratch renders
+/one-pager/.venv/
+/one-pager/preview*.png
+/one-pager/hires*.png
+/one-pager/crop*.png

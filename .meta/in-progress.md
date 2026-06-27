@@ -6,14 +6,20 @@ Current work state. Update constantly, delete items when done.
 
 ## Active
 
-- **Next slice — M4: the 1-page writeup** (data viz + prose). Best done in a fresh
-  session: `/hello` reloads the results buckets + `talking-points.md` + the designs,
-  then data-viz polish on the run-cloud-1 / run-cloud-2 / lookahead charts + the
-  voice pass on the brief. Audition framing (locked): *this month* (look-ahead
-  1,364×) / *the future* (Valkey) / *how I know* (head-to-head + proofs). Hard cap:
-  1 page. Source: `results/`, `talking-points.md`, `enhancements.md`, the design docs.
-  - Then **M-PR**: the Honcho fork PR ("merge this for all of P1's wins" vs their
-    real schema) — the biggest adopt-it signal (see `roadmap.md`).
+- **M4: the 1-page PDF one-pager** (`feature/one-pager`, started 2026-06-27). Design
+  **accepted + building** → `designs/one-pager-construction.md` (+ `honcho-fig2-source.md`).
+  Deliverable: a 1-page LaTeX PDF for Phil to email Vineeth + a repo invite. Locked: LaTeX;
+  two-stage migration framing (growth spine); 3 figures — Fig 1 look-ahead hero (1,364×),
+  Fig 2 the cited diff vs Honcho's real `get_and_claim_work_units`, Fig 3 the workers×process
+  manifold (2-D + 3-D, A/B in SII). Copy in Phil's voice (figs+titles his, body collaborative;
+  current sample copy in the design doc). Hard cap: 1 page.
+  - **Build steps:** (1) redraw the 3 figures from `results/` to deliverable-grade (one
+    palette/typeface); (2) LaTeX scaffold (masthead + 2-col body + endnotes band); (3) compile
+    → SII loop. Then Phil's voice/layout polish pass.
+
+## Cancelled
+
+- **M-PR (Honcho fork PR)** — cancelled 2026-06-27. Tomorrow is demo prep instead.
 
 ## Shipped (all accepted + merged to `main`)
 
