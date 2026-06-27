@@ -3,7 +3,12 @@
 
 # build output
 /plq
-/results/
+
+# results: track curated run buckets, ignore loose top-level scratch
+/results/*
+!/results/README.md
+!/results/run-*/
+!/results/lookahead/
 
 # go
 *.test

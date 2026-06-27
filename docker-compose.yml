@@ -14,7 +14,8 @@ services:
       POSTGRES_USER: plq
       POSTGRES_DB: plq
     ports:
-      - "5432:5432"
+      - "5433:5432"   # host 5433 = the Makefile default DSN (dodges a stock local PG on 5432);
+                      # the containerized worker/loadgen still reach it as postgres:5432 over the network
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U plq"]
       interval: 2s
@@ -49,13 +50,15 @@ services:
       postgres:
         condition: service_healthy
 
-  # Path 2 datastore (Valkey, M3). `make up-valkey` brings up just this; the load
-  # harness runs on the host (`make load-test-valkey`) against localhost:6379.
+  # Path 2 datastore (Valkey, M3). `make up-valkey` brings up all 4 instances
+  # (6379-6382) so the host-side shard sweep (`make head-to-head`) can hit 1/2/4
+  # independent primaries; `make load-test-valkey` uses just :6379 (1-shard baseline).
   # Durability config = the self-hosted defaults from the accepted design
   # (valkey-work-unit-queue.md §Durability & loss): ≤~1s loss window, never evict.
+  # All four share one command/healthcheck via the anchors below.
   valkey:
     image: valkey/valkey:8.1
-    command:
+    command: &valkey-command
       - valkey-server
       - --appendonly
       - "yes"
@@ -69,8 +72,30 @@ services:
       - noeviction             # a full instance REJECTS enqueues, never silently drops queued work
     ports:
       - "6379:6379"
-    healthcheck:
+    healthcheck: &valkey-healthcheck
       test: ["CMD", "valkey-cli", "ping"]
       interval: 2s
       timeout: 3s
       retries: 20
+
+  # Shards 2-4 for the local linearity sweep (independent primaries, same config).
+  valkey-2:
+    image: valkey/valkey:8.1
+    command: *valkey-command
+    ports:
+      - "6380:6379"
+    healthcheck: *valkey-healthcheck
+
+  valkey-3:
+    image: valkey/valkey:8.1
+    command: *valkey-command
+    ports:
+      - "6381:6379"
+    healthcheck: *valkey-healthcheck
+
+  valkey-4:
+    image: valkey/valkey:8.1
+    command: *valkey-command
+    ports:
+      - "6382:6379"
+    healthcheck: *valkey-healthcheck

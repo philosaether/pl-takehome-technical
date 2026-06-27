@@ -54,3 +54,33 @@ it writing the Postgres driver against the contract, and aligned the oracle to t
 design — the conformance suite now pins the per-head semantics for *both* backends.
 *(Good "how the apples-to-apples contract earns its keep" story: the second
 implementation is what flushed out the ambiguity in the first.)*
+
+## A Valkey primary needs less iron than a PG primary — the asymmetry is the point
+
+For the cloud head-to-head, each Valkey primary is provisioned on the *same* box
+class as the single PG primary (`m5.xlarge`) — a deliberately fair per-primary
+comparison. But Valkey executes commands single-threaded, so a primary won't
+*use* an `m5.xlarge` the way Postgres does (no multi-core query parallelism to
+saturate). That asymmetry isn't a flaw in the benchmark — it's a finding: the
+Valkey path hits its throughput on smaller, cheaper instances, so the real
+per-throughput cost gap is *wider* than the same-box comparison shows. The
+same-class run is the conservative number; the honest footnote is "and Valkey
+gets there on less."
+
+## The head-to-head, measured: PG plateaus at ~1.7k/s, Valkey scales linearly to ~92k
+
+The take-home's thesis, proven on cloud iron (7× m5.xlarge, AWS, torn down for
+≪$1). Pure queue throughput (zero simulated work), acks/s:
+
+| postgres | valkey×1 | valkey×2 | valkey×4 |
+|----------|----------|----------|----------|
+| ~1,723   | ~25,771  | ~49,301  | ~92,064  |
+
+Postgres plateaus at ~1.7k and *declines* past 100 workers (claim contention).
+Valkey scales **near-linearly with shard count** — 1.9× at 2 shards, 3.6× at 4 —
+because the design is N independent primaries with `hash(workspace)%N` routing, not
+a single contended store. That's both the "how I know it works" evidence and the
+answer to "what's the migration worth": ~15× at one shard, ~53× at four, and the
+slope says it keeps going. The cost-mode runs add the kicker — at 1000 workers PG
+can't even keep them fed (stalls at ~1.4k while Valkey hits the ~50k work ceiling).
+Full data + charts: `.meta/assessments/m3-head-to-head/`.

@@ -1,0 +1,9 @@
+backend,shards,workers,process,throughput_acks_s,claim_p99_ms,loop_p99_ms,loop_samples,min_backlog,max_backlog,saturated,enqueued,acked,lease_expired
+postgres,1,1,zero,379,50.00,100.00,53,0,2,false,22762,2474,0
+postgres,1,10,zero,1976,50.00,100.00,217,0,1,false,21576,9578,0
+valkey,1,1,zero,4281,10.00,50.00,526,782,2470,true,168822,25275,0
+valkey,1,10,zero,19742,10.00,50.00,2533,0,2,false,139724,118234,0
+valkey,2,1,zero,5134,5.00,50.00,594,837,2804,true,194918,29004,0
+valkey,2,10,zero,17299,20.00,50.00,2245,0,3,false,125588,101297,0
+valkey,4,1,zero,3071,20.00,100.00,364,577,1995,true,136372,17546,0
+valkey,4,10,zero,15311,50.00,100.00,1914,0,3,false,106737,85250,0

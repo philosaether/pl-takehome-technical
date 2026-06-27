@@ -30,6 +30,7 @@ type RunSpec struct {
 // Result is the summary of one sweep point (one row of results/sweep.csv).
 type Result struct {
 	Backend    string // "postgres" | "valkey" — the head-to-head series key
+	Shards     int    // valkey shard count (1 = baseline; 2/4 = linearity sweep); PG/memory = 1
 	Workers    int
 	Process    string
 	Throughput float64 // acks/sec over the measurement window
@@ -176,14 +177,14 @@ func finalize(res Result, m *Metrics, minB, maxB, measAcked int64, measStart tim
 
 func ms(d time.Duration) float64 { return float64(d) / float64(time.Millisecond) }
 
-// SweepHeader / CSVRow define results/sweep.csv. The leading backend column is the
-// head-to-head series key (PG vs Valkey overlaid on the same chart).
+// SweepHeader / CSVRow define results/sweep.csv. The leading backend+shards columns
+// are the head-to-head series key (PG vs Valkey-at-N-shards overlaid on one chart).
 func SweepHeader() string {
-	return "backend,workers,process,throughput_acks_s,claim_p99_ms,loop_p99_ms,loop_samples,min_backlog,max_backlog,saturated,enqueued,acked,lease_expired"
+	return "backend,shards,workers,process,throughput_acks_s,claim_p99_ms,loop_p99_ms,loop_samples,min_backlog,max_backlog,saturated,enqueued,acked,lease_expired"
 }
 
 func (r Result) CSVRow() string {
-	return fmt.Sprintf("%s,%d,%s,%.0f,%.2f,%.2f,%d,%d,%d,%t,%d,%d,%d",
-		r.Backend, r.Workers, r.Process, r.Throughput, ms(r.ClaimP99), ms(r.LoopP99), r.LoopSamps,
+	return fmt.Sprintf("%s,%d,%d,%s,%.0f,%.2f,%.2f,%d,%d,%d,%t,%d,%d,%d",
+		r.Backend, r.Shards, r.Workers, r.Process, r.Throughput, ms(r.ClaimP99), ms(r.LoopP99), r.LoopSamps,
 		r.MinBacklog, r.MaxBacklog, r.Saturated, r.Enqueued, r.Acked, r.LeaseExp)
 }

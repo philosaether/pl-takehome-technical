@@ -7,6 +7,13 @@ WORKERS_SWEEP ?= 1 10 100 1000
 PROCESS_MS ?= 2 20 200
 
 PLQ_VALKEY_ADDR ?= localhost:6379
+# Valkey shard sweep: each entry is one PLQ_VALKEY_ADDR (comma-separated primaries) =
+# one shard count. The default 1/2/4 set is the linearity proof (head-to-head);
+# load-test-valkey overrides this to a single addr for the 1-shard baseline.
+# Needs the matching local instances up (`make up-valkey` brings up 4).
+VALKEY_ADDRS_SWEEP ?= localhost:6379 \
+                      localhost:6379,localhost:6380 \
+                      localhost:6379,localhost:6380,localhost:6381,localhost:6382
 
 .PHONY: build test proofs proofs-valkey fmt vet images up down up-valkey down-valkey \
         load-test load-test-valkey head-to-head sweep-postgres sweep-valkey graph \
@@ -51,12 +58,13 @@ up:
 down:
 	docker compose down -v
 
-## up-valkey / down-valkey: just the Valkey datastore (Path 2) for the sweep + proofs
+## up-valkey / down-valkey: the Valkey datastores (Path 2) for the sweep + proofs.
+## Brings up all 4 local instances (6379-6382) so the shard sweep can hit 1/2/4.
 up-valkey:
-	docker compose up -d valkey
+	docker compose up -d valkey valkey-2 valkey-3 valkey-4
 
 down-valkey:
-	docker compose rm -sfv valkey
+	docker compose rm -sfv valkey valkey-2 valkey-3 valkey-4
 
 ## proofs-valkey: the correctness gate vs a live Valkey — conformance (8 scenarios)
 ## + ordering-under-crash. Needs PLQ_VALKEY_ADDR reachable (`make up-valkey`).
@@ -78,7 +86,7 @@ load-test:
 load-test-valkey:
 	@mkdir -p results
 	@rm -f results/sweep.csv results/sample-*.csv
-	@$(MAKE) sweep-valkey
+	@$(MAKE) sweep-valkey VALKEY_ADDRS_SWEEP="$(PLQ_VALKEY_ADDR)"
 	$(MAKE) graph
 
 ## head-to-head: PG sweep + Valkey sweep into ONE results/sweep.csv, then graph the
@@ -108,16 +116,20 @@ sweep-postgres:
 	done
 
 sweep-valkey:
-	@for n in $(WORKERS_SWEEP); do \
-	  echo ">>> valkey workers=$$n process=zero"; \
-	  PLQ_BACKEND=valkey PLQ_VALKEY_ADDR="$(PLQ_VALKEY_ADDR)" \
-	  PLQ_WORKERS=$$n PLQ_PROCESS=zero PLQ_PRODUCERS=64 PLQ_RESULTS=./results \
-	  $(GO) run -tags valkey ./cmd/plq loadrun ; \
-	  for ms in $(PROCESS_MS); do \
-	    echo ">>> valkey workers=$$n process=$${ms}ms"; \
-	    PLQ_BACKEND=valkey PLQ_VALKEY_ADDR="$(PLQ_VALKEY_ADDR)" \
-	    PLQ_WORKERS=$$n PLQ_PROCESS=cost PLQ_PROCESS_BASE=$${ms}ms PLQ_PRODUCERS=64 PLQ_RESULTS=./results \
+	@for addrs in $(VALKEY_ADDRS_SWEEP); do \
+	  shards=$$(echo $$addrs | tr ',' '\n' | grep -c .); \
+	  : "shards here is for the log line only; the CSV's shards column is computed by shardCount() in cmd/plq/main.go — keep in sync"; \
+	  for n in $(WORKERS_SWEEP); do \
+	    echo ">>> valkey shards=$$shards workers=$$n process=zero"; \
+	    PLQ_BACKEND=valkey PLQ_VALKEY_ADDR="$$addrs" \
+	    PLQ_WORKERS=$$n PLQ_PROCESS=zero PLQ_PRODUCERS=64 PLQ_RESULTS=./results \
 	    $(GO) run -tags valkey ./cmd/plq loadrun ; \
+	    for ms in $(PROCESS_MS); do \
+	      echo ">>> valkey shards=$$shards workers=$$n process=$${ms}ms"; \
+	      PLQ_BACKEND=valkey PLQ_VALKEY_ADDR="$$addrs" \
+	      PLQ_WORKERS=$$n PLQ_PROCESS=cost PLQ_PROCESS_BASE=$${ms}ms PLQ_PRODUCERS=64 PLQ_RESULTS=./results \
+	      $(GO) run -tags valkey ./cmd/plq loadrun ; \
+	    done; \
 	  done; \
 	done
 

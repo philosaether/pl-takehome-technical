@@ -66,7 +66,10 @@ resource "aws_instance" "pg" {
   instance_type          = var.pg_type
   key_name               = aws_key_pair.plq.key_name
   vpc_security_group_ids = [aws_security_group.plq.id]
-  user_data              = <<-EOF
+  root_block_device {
+    volume_size = 20 # the postgres:16 image (LLVM/JIT layers) overflows the ~8 GiB AMI default
+  }
+  user_data = <<-EOF
     #!/bin/bash
     dnf install -y docker
     systemctl enable --now docker
@@ -74,7 +77,28 @@ resource "aws_instance" "pg" {
       -e POSTGRES_PASSWORD=plq -e POSTGRES_USER=plq -e POSTGRES_DB=plq \
       -p 5432:5432 postgres:16
   EOF
-  tags                   = { Name = "plq-pg" }
+  tags      = { Name = "plq-pg" }
+}
+
+# Valkey primaries — N independent standalone instances (NOT Cluster; the design's
+# `hash(workspace)%N` routing models exactly this). The sweep points the worker at
+# 1/2/4 of them via the valkey_addrs_* outputs. Same durability config as compose
+# (valkey-work-unit-queue.md §Durability & loss): ≤~1s loss window, never evict.
+resource "aws_instance" "valkey" {
+  count                  = var.valkey_count
+  ami                    = data.aws_ami.al2023.id
+  instance_type          = var.valkey_type
+  key_name               = aws_key_pair.plq.key_name
+  vpc_security_group_ids = [aws_security_group.plq.id]
+  user_data              = <<-EOF
+    #!/bin/bash
+    dnf install -y docker
+    systemctl enable --now docker
+    docker run -d --name valkey --restart always -p 6379:6379 valkey/valkey:8.1 \
+      valkey-server --appendonly yes --appendfsync everysec --aof-use-rdb-preamble yes \
+      --maxmemory 512mb --maxmemory-policy noeviction
+  EOF
+  tags                   = { Name = "plq-valkey-${count.index + 1}" }
 }
 
 # Worker box — runs `plq worker` ALONE (production-match). Static binary scp'd in.

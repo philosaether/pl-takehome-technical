@@ -20,11 +20,23 @@ except ImportError:
     sys.exit("matplotlib not installed — run: pip install matplotlib")
 
 
-def label_for(backend, proc):
+def label_for(backend, shards, proc):
     """Series label. With a backend column (M3 head-to-head), prefix it so PG and
-    Valkey curves are distinguishable; without one (legacy single-backend runs),
-    fall back to just the process model."""
-    return f"{backend} process={proc}" if backend else f"process={proc}"
+    Valkey curves are distinguishable; with shards>1 (the Valkey linearity sweep),
+    append ×N so the 1/2/4-shard curves separate. Single-shard and legacy
+    single-backend runs stay uncluttered."""
+    if not backend:
+        return f"process={proc}"
+    tag = f"{backend}×{shards}" if shards > 1 else backend
+    return f"{tag} process={proc}"
+
+
+def _shards(row):
+    """Shard count from the row; missing/empty (legacy CSV) → 1."""
+    try:
+        return int(row.get("shards") or 1)
+    except ValueError:
+        return 1
 
 
 def plot_throughput(results_dir):
@@ -37,15 +49,15 @@ def plot_throughput(results_dir):
     series = defaultdict(list)
     with open(path) as f:
         for row in csv.DictReader(f):
-            series[(row.get("backend", ""), row["process"])].append(
+            series[(row.get("backend", ""), _shards(row), row["process"])].append(
                 (int(row["workers"]), float(row["throughput_acks_s"]), row["saturated"] == "true")
             )
     fig, ax = plt.subplots(figsize=(8, 5))
-    for (backend, proc), pts in sorted(series.items()):
+    for (backend, shards, proc), pts in sorted(series.items()):
         pts.sort()
         xs = [w for w, _, _ in pts]
         ys = [t for _, t, _ in pts]
-        ax.plot(xs, ys, marker="o", label=label_for(backend, proc))
+        ax.plot(xs, ys, marker="o", label=label_for(backend, shards, proc))
         # mark non-saturated points (the number may be load-gen-bound)
         for w, t, sat in pts:
             if not sat:
@@ -77,18 +89,18 @@ def plot_latency(results_dir):
             p99 = float(row["loop_p99_ms"])
             if p99 <= 0:  # log scale can't plot 0 (no samples at that point)
                 continue
-            series[(row.get("backend", ""), row["process"])].append(
+            series[(row.get("backend", ""), _shards(row), row["process"])].append(
                 (int(row["workers"]), p99, row["saturated"] == "true")
             )
     if not series:
         print("skip latency: no loop_p99 samples")
         return
     fig, ax = plt.subplots(figsize=(8, 5))
-    for (backend, proc), pts in sorted(series.items()):
+    for (backend, shards, proc), pts in sorted(series.items()):
         pts.sort()
         xs = [w for w, _, _ in pts]
         ys = [p for _, p, _ in pts]
-        ax.plot(xs, ys, marker="o", label=label_for(backend, proc))
+        ax.plot(xs, ys, marker="o", label=label_for(backend, shards, proc))
         for w, p, sat in pts:
             if not sat:
                 ax.annotate("unsat", (w, p), fontsize=7, color="red")

@@ -378,3 +378,25 @@ Driver was already conformance-8/8 + ordering-under-crash green; applied + re-ve
   idempotent posture, I1 order preserved). Documented in a Drain comment, not coded
   around (would add a hot-path round-trip to close a window Ack already closes).
 - Reconciled `valkey-driver.md` frontmatter (Divergences/Deferred).
+
+## 2026-06-27 — M3 head-to-head: shard-count capture, cloud run, canonical curves
+
+`riff/m3-head-to-head`. Built the two prerequisites the merged M3 code didn't cover,
+dry-ran locally, then ran the gated cloud head-to-head (Phil authorized the spend).
+- **Shard count is now a sweep series key** — `Result.Shards` → `sweep.csv` column,
+  plot.py series `(backend, shards, process)` (labels `valkey×N` for N>1). Makefile
+  `VALKEY_ADDRS_SWEEP` (1/2/4 addrs); compose `valkey-2/3/4` for the local sweep.
+- **Terraform gained N Valkey primaries** (`count = var.valkey_count`, default 4;
+  `valkey_type = pg_type` for a fair per-primary comparison) + `valkey_addrs_1/2/4`
+  outputs. Independent standalone primaries, not Cluster (matches the design).
+- **Two infra bugs found + fixed during the run:** compose PG host port 5432→5433
+  (the Makefile default DSN + comment expected 5433); pg box overflowed its ~8 GiB
+  AMI root volume pulling postgres:16 → `root_block_device { volume_size = 20 }`.
+- **Result (canonical, cloud, ≪$1):** PG plateaus ~1.7k acks/s and declines past
+  100 workers; Valkey scales near-linearly 26k→49k→92k across 1/2/4 shards (~53× PG
+  at 4 shards). The decision-gate proof (#4). Artifacts + writeup:
+  `.meta/assessments/m3-head-to-head/`.
+- **Env notes (not code):** Docker Desktop `credsStore: desktop` errored on
+  anonymous pulls — worked around with a throwaway `DOCKER_CONFIG` (global config
+  untouched). AWS EC2 needs the `praxis`/terraform-admin profile; `default`
+  (pb-dev-laptop) lacks ec2 perms.
