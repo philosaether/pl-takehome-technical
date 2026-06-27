@@ -433,3 +433,5 @@ sharded/tuned PG loses by 3–15×. Artifacts + caveats: `results/run-cloud-2/`.
   `TF_VAR_pg_count=8 TF_VAR_valkey_count=8` + m5.xlarge/m5.2xlarge types.
 - **Total spend across ~5 apply/destroy cycles: a few dollars** (auto-teardown caught
   every failure fast).
+
+2026-06-27: Deferred: /ship unplanned-logic-complexity gate (to philset).
