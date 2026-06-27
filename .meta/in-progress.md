@@ -65,7 +65,11 @@ Current work state. Update constantly, delete items when done.
     pool, pg_tuned, valkey_count=8, worker/producer runner pools) → (4) orchestration
     scripts + plot.py faceting → (5) local dry-run (conformance + thin 2-shard smoke)
     → (6) gated cloud apply → run-cloud-2 → teardown.
-  - **Status: BUILDING — step 1 (the router).**
+  - **Status: BUILT + locally verified — steps 1-5 done (`7b7488a`→`f4ee0b0`).**
+    Router conformance 8/8 at 1 & 2 shards; isolated-topology dry-run green
+    (shards=2, saturated at w=1); terraform plan = 28 resources; plot faceting +
+    sharded sweep verified. **GATED on step 6: `make cloud-up` → run-cloud-2.sh →
+    `make cloud-down` (~$6-7, the only spend; awaiting go).**
 
 - **M1 Postgres driver — DONE, merged to `main`.** All 8 methods; conformance 8/8;
   per-head flush. `postgres-driver.md` accepted+reconciled. (`talking-points.md`
