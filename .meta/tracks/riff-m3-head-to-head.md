@@ -23,7 +23,7 @@ Played notes graduate matching `in-progress.md` items.
 
 ---
 
-## Note 1: shard-count capture in the sweep
+## Note 1: shard-count capture in the sweep ✅ PLAYED (5bac539)
 
 **Why.** `sweep.csv`'s `backend` column is just "valkey" regardless of 1/2/4
 shards, so the linearity proof (the M3 decision gate — Valkey scales 1→4 shards
@@ -85,3 +85,58 @@ producer-count tuning to saturate Valkey (measure-first, on the real sweep).
 `WORKERS_SWEEP="1 10" PROCESS_MS="" make head-to-head` → confirm `sweep.csv` has
 a `shards` column with 1/2/4 rows for valkey + 1 for postgres, and `latency.png`/
 `throughput.png` render five distinct series. (Full dry run is Note 3.)
+
+---
+
+## Note 2: Terraform Valkey box(es) for the cloud head-to-head ✅ PLAYED
+
+**Why.** `deploy/terraform` provisions PG-only (`pg` / `worker` / `producer`).
+The cloud head-to-head needs Valkey primaries — and for the linearity proof, up
+to 4 — running the *same* durability config as compose, in the same security
+group so the worker box can reach them. This is the cloud mirror of Note 1's
+local `valkey-2/3/4`.
+
+**What I'll add (terraform only — no app code):**
+
+1. **`main.tf` — `aws_instance.valkey` with `count = var.valkey_count`** (default
+   4). Each runs `valkey/valkey:8.1` via docker in user-data, with the exact
+   compose durability flags (`--appendonly yes --appendfsync everysec
+   --aof-use-rdb-preamble yes --maxmemory 512mb --maxmemory-policy noeviction`),
+   `-p 6379:6379`, `--restart always`. Tagged `plq-valkey-${count.index+1}`.
+   Same `key_name` + `vpc_security_group_ids` as the others — the SG already
+   allows all intra-group traffic (`self = true`), so worker→valkey:6379 is open
+   with no new rule.
+
+2. **`variables.tf` —** `valkey_count` (default 4) and `valkey_type` (default
+   `m5.xlarge`, matching `pg_type` so a single Valkey primary vs the single PG
+   primary is a fair per-box comparison; dial down to cut spend).
+
+3. **`outputs.tf` —** `valkey_private_ips` (the list) plus three convenience
+   joined addr strings the worker box pastes straight into `PLQ_VALKEY_ADDR`:
+   `valkey_addrs_1` / `_2` / `_4` (e.g. `10.0.1.5:6379,10.0.1.6:6379`). These map
+   1:1 onto the local `VALKEY_ADDRS_SWEEP` entries.
+
+4. **`deploy/terraform/README.md` —** extend the runbook: build *both* static
+   binaries (`-tags postgres` and `-tags valkey`), ship both to the worker box,
+   run `sweep-postgres` against the PG DSN then `sweep-valkey` at each
+   `valkey_addrs_{1,2,4}`, pull one combined `sweep.csv`, graph. Note the spend:
+   default adds 4× `m5.xlarge` — still ≈$1 for a sub-hour torn-down run, but call
+   it out, and note `valkey_count=1` for a baseline-only run.
+
+**Decision points (defaults chosen, flag to override):**
+- **`count`-based fleet of 4, not a single resized box.** N independent primaries
+  *is* the architecture under test (`hash(workspace)%N` routing); modeling it as
+  real separate instances keeps the cloud run honest. The sweep uses 1/2/4 of
+  them via the addr-string outputs.
+- **`valkey_type = m5.xlarge` (= pg_type).** Fair per-primary comparison. Valkey
+  is single-threaded for command exec, so it won't *use* the box like PG — that
+  asymmetry is itself a talking point (a Valkey primary needs less iron).
+  - Add it to talking-points.md and press on with the m5.xlarge for the test
+
+**Out of scope:** standing up real Valkey Cluster (the design names it, doesn't
+run it — independent primaries is the test); auto-running the sweep from
+user-data (operator-driven, same as the PG box today).
+
+**Verify (no apply — that's gated/Note 3):** `terraform -chdir=deploy/terraform
+validate` + `terraform fmt -check`, and `terraform plan` *iff* TF_VARs are set
+(otherwise eyeball the plan during the Note 3 dry-run walk-through). No `apply`.

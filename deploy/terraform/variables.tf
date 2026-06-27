@@ -27,3 +27,14 @@ variable "producer_type" {
   type    = string
   default = "m5.large"
 }
+
+variable "valkey_count" {
+  type        = number
+  default     = 4 # N independent primaries; the sweep uses 1/2/4 of them. Set 1 for a baseline-only run.
+  description = "Number of standalone Valkey primaries for the shard sweep"
+}
+
+variable "valkey_type" {
+  type    = string
+  default = "m5.xlarge" # = pg_type, for a fair per-primary comparison vs the single PG box
+}

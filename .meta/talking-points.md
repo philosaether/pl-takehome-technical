@@ -54,3 +54,15 @@ it writing the Postgres driver against the contract, and aligned the oracle to t
 design — the conformance suite now pins the per-head semantics for *both* backends.
 *(Good "how the apples-to-apples contract earns its keep" story: the second
 implementation is what flushed out the ambiguity in the first.)*
+
+## A Valkey primary needs less iron than a PG primary — the asymmetry is the point
+
+For the cloud head-to-head, each Valkey primary is provisioned on the *same* box
+class as the single PG primary (`m5.xlarge`) — a deliberately fair per-primary
+comparison. But Valkey executes commands single-threaded, so a primary won't
+*use* an `m5.xlarge` the way Postgres does (no multi-core query parallelism to
+saturate). That asymmetry isn't a flaw in the benchmark — it's a finding: the
+Valkey path hits its throughput on smaller, cheaper instances, so the real
+per-throughput cost gap is *wider* than the same-box comparison shows. The
+same-class run is the conservative number; the honest footnote is "and Valkey
+gets there on less."
