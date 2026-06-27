@@ -8,7 +8,7 @@ The M4 deliverable: a 1-page PDF brief for Honcho. Design + rationale in
 
 ```sh
 # figures (matplotlib) — one-time venv:
-python3.13 -m venv .venv && .venv/bin/pip install matplotlib numpy scipy
+python3 -m venv .venv && .venv/bin/pip install matplotlib numpy scipy
 .venv/bin/python figures.py          # → figures/*.pdf
 
 # the PDF (tectonic — self-contained LaTeX, brew install tectonic):

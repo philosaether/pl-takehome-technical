@@ -2,7 +2,19 @@
 Status: accepted
 Date: 2026-06-27
 Accepted: 2026-06-27
+Implemented: 2026-06-27 (feature/one-pager)
 Assessment: results/run-cloud-1/, results/run-cloud-2/, results/lookahead/
+Divergences: Title reframed "Two-Stage" → "Simple, Extensible"; abstract/§1 copy
+  compressed live; §2 closes with an added "track time-to-process + peak workers,
+  hold the migration" recommendation (replacing the "out of scope" framing); Fig 2
+  shipped as an inline LaTeX listings block, not a rendered image; 2-col body uses
+  natural multicol flow rather than fixed left/right placement; toolchain pinned to
+  tectonic; manifold resolved to 2-D (3-D rendered but not embedded); manifold
+  interpolation linear, not cubic (review fix — cubic invented a smooth crossover
+  the 4 rungs don't support).
+Deferred: endnote band trimmed (cloud-spend folded into §3 Methods; "backend 2nd
+  choice" cut); Fig 3 sharpening rerun (5/50/100 ms + durability curve) — flagged
+  enhancement, not built.
 ---
 
 # One-Pager Construction — Desired State

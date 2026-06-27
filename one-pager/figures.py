@@ -67,16 +67,20 @@ def fig1_lookahead():
     ax.loglog(tasks, ours, "-o", color=PG, lw=2, ms=4,
               label="maintained look-ahead (proposed)")
 
-    # the annotation IS the chart: the gap at 10^7
+    # the annotation IS the chart: the gap at 10^7 (derived from the data, not
+    # hardcoded, so it can't desync if lookahead.csv is regenerated)
     x_end = tasks[-1]
+    speedup = naive[-1] / ours[-1]
     ax.annotate(
         "", xy=(x_end, naive[-1]), xytext=(x_end, ours[-1]),
         arrowprops=dict(arrowstyle="<->", color=ACCENT, lw=1.6),
     )
-    ax.text(x_end * 0.62, np.sqrt(ours[-1] * naive[-1]), "1,364×",
+    ax.text(x_end * 0.62, np.sqrt(ours[-1] * naive[-1]), f"{speedup:,.0f}×",
             color=ACCENT, fontweight="bold", fontsize=15, ha="right", va="center")
-    ax.text(x_end, naive[-1] * 1.5, "2.5 s", color=VALKEY, fontsize=8.5, ha="center")
-    ax.text(x_end, ours[-1] * 0.5, "1.9 ms", color=PG, fontsize=8.5, ha="center")
+    ax.text(x_end, naive[-1] * 1.5, f"{naive[-1]/1000:.1f} s", color=VALKEY,
+            fontsize=8.5, ha="center")
+    ax.text(x_end, ours[-1] * 0.5, f"{ours[-1]:.1f} ms", color=PG,
+            fontsize=8.5, ha="center")
 
     ax.set_xlabel("pending tasks")
     ax.set_ylabel("scheduling look-ahead cost (ms / poll)")
@@ -128,9 +132,10 @@ def _interp_surface(ratio, n=120):
     wx = np.linspace(np.log10(WORKER_LEVELS[0]), np.log10(WORKER_LEVELS[-1]), n)
     py = np.linspace(0, len(PROC_LEVELS) - 1, n)
     WX, PY = np.meshgrid(wx, py)
-    Z = griddata(pts, vals, (WX, PY), method="cubic")
-    Zlin = griddata(pts, vals, (WX, PY), method="linear")  # fill cubic NaNs at hull edge
-    Z = np.where(np.isnan(Z), Zlin, Z)
+    # LINEAR (not cubic): with only 4 process rungs, cubic invents a smooth
+    # crossover in the 0–2 ms band (where there are no points) and can overshoot.
+    # Linear is the honest read — straight segments between measured rungs.
+    Z = griddata(pts, vals, (WX, PY), method="linear")
     return WX, PY, Z  # Z is log10(ratio)
 
 
