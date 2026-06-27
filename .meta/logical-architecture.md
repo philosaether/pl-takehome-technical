@@ -1,8 +1,8 @@
 # Logical Architecture
 
 Codebase map for navigation and review. Maintained by the team; corrected over
-time. Reflects **M0 (scaffold)** — Postgres (M1) and Valkey (M3) drivers and the
-load-test harness (M2) are stubbed.
+time. Reflects **M0–M3 complete** — both real drivers (Postgres M1, Valkey M3) and
+the load-test harness (M2) are built, merged, and run head-to-head on cloud.
 
 ## The one idea
 
@@ -38,7 +38,7 @@ That identity is what makes the head-to-head a fair fight.
 | `internal/queue` | The contract: `Backend` interface, core types, the shared worker loop. | **real** |
 | `internal/memory` | In-memory `Backend` — dev, CI typecheck, **correctness oracle**. | **real** |
 | `internal/config` | Volatility-split tunables from `PLQ_*` env; projects `WorkerConfig`. | **real** |
-| `internal/loadgen` | Zipfian-churn producers, the `loadrun` harness, metrics (`queue.Recorder`), chaos. | **real** |
+| `internal/loadgen` | Zipfian-churn producers, the `loadrun` harness, metrics (`queue.Recorder`), chaos. `Result`/`sweep.csv` carry a `shards` dimension (the head-to-head series key, with `backend`). | **real** |
 | `internal/postgres` | Path 1 driver — all 8 methods + `Stater`/`Resetter`. | **real** |
 | `internal/valkey` | Path 2 driver — Streams+ZSET+Hash+Lua via rueidis; all 8 methods + `Stater`/`Resetter`; N-shard routing by workspace. | **real** |
 | `cmd/plq` | CLI (`worker\|loadgen\|loadrun\|reap\|reset`) + build-tagged `newBackend`. | **real** |
@@ -96,16 +96,23 @@ Gate: a unit is claimable only when `pendingCost ≥ threshold` **or** flush-pro
   Each binary contains exactly one driver.
 - One binary `plq`, subcommands `worker | loadgen | reap`.
 - Config via `PLQ_*` env vars (see `config.go` for the full list + defaults).
-- `make build | test | vet | proofs`; `make up` (postgres path, functional from M1);
-  `make load-test` (the M2 sweep + graph — wired, stubbed today).
+- `make build | test | vet | proofs`; `make up` (postgres path) / `make up-valkey`
+  (4 local Valkey instances for the shard sweep); `make load-test` /
+  `load-test-valkey` / `head-to-head` (the M2/M3 sweep + graph — real).
+- **Cloud:** `deploy/terraform` provisions the canonical AWS boxes — `pg` + `worker`
+  + `producer` + N `valkey` primaries (`count = var.valkey_count`); `make cloud-up`/
+  `cloud-down` are the gated apply/destroy. Benchmark outputs land in `results/`,
+  tracked as per-run buckets (`run-cloud-N/`, `run-local-N/`, `lookahead/`; see
+  `results/README.md`).
 
-## Where the milestones land
+## Milestones (all landed)
 
-- **M1 (Postgres):** flesh out `internal/postgres` against the `Backend` contract —
-  schema, maintained aggregate, `FOR UPDATE SKIP LOCKED` claim, reaper. Add `pgx`
-  to `go.mod`.
-- **M2 (loadgen + proofs):** real `internal/loadgen` (Zipfian churn, crash
-  injection, metrics) + `proofs/` (the four deterministic proofs) + the
-  throughput-vs-workers graph and the process-model sweep.
-- **M3 (Valkey):** `internal/valkey` (Streams + ZSETs + Lua via rueidis); shard by
-  `workspace`. Head-to-head vs Path 1.
+- **M1 (Postgres):** `internal/postgres` against the `Backend` contract — schema,
+  maintained aggregate, `FOR UPDATE SKIP LOCKED` claim, reaper. Merged to main.
+- **M2 (loadgen + proofs):** `internal/loadgen` (Zipfian churn, crash injection,
+  metrics) + `tests/proofs` + the throughput/latency graphs + look-ahead bench +
+  the Terraform harness. Merged to main.
+- **M3 (Valkey + head-to-head):** `internal/valkey` (Streams + ZSETs + Lua via
+  rueidis), shard by `workspace`; the head-to-head sweep adds the `shards` series
+  dimension + terraform Valkey provisioning, run on cloud (`results/run-cloud-1/`).
+  Next: the ambitious run (`designs/ambitious-head-to-head.md`).

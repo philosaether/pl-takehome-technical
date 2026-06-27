@@ -158,6 +158,10 @@ func runLoadrun(ctx context.Context, be queue.Backend, cfg config.Config) {
 // shardCount derives the Valkey shard count from the configured addr list (one
 // addr per primary). PG/memory have no addr list → a single logical primary (1),
 // which is the honest series label for the head-to-head.
+//
+// NOTE: the Makefile's sweep-valkey recomputes the same count for its progress
+// log (`tr ',' '\n' | grep -c .`). Keep the two in sync — a divergence would make
+// the logged shard count disagree with the `shards` column this writes to the CSV.
 func shardCount(cfg config.Config) int {
 	n := 0
 	for _, a := range strings.Split(cfg.ValkeyAddr, ",") {

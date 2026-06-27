@@ -223,3 +223,71 @@ existing artifacts: cloud head-to-head → `run-cloud-1/` (+ its results.md), M3
 run → `run-local-1/`, M2 bench → `lookahead/`. Removed the
 `.meta/assessments/m3-head-to-head/` copy (was only a workaround for the ignored
 results/ — one source of truth now). `results/README.md` documents it.
+
+---
+
+## Note 5: the ambitious cloud run (run-cloud-2) — DESIGN, awaiting decisions
+
+**Goal.** Turn run-cloud-1's clean-but-soft proof into the airtight version. Phil
+picked all four dimensions + the full process sweep:
+- **Isolated + saturated** topology (fixes co-located/unsat)
+- **Scale to 8 shards** (1/2/4/8 — linearity is a trend, not 3 points)
+- **Tuned PG baseline** (preempt "you didn't tune PG")
+- **Durability tradeoff** (Valkey fsync off/everysec/always)
+- **Process sweep 0/2/20/200ms** (behavior across work regimes incl. LLM-scale)
+Plus analysis-only: **$/throughput** + **p99 latency at the knee**.
+
+### Topology — isolated worker (the rigor dimension)
+run-cloud-1 used integrated `loadrun` (producers+workers one box) → suppressed
+numbers + unsat points. New model per backend config:
+- **Producer box(es):** `plq loadgen` running *continuously* (Zipfian churn).
+- **Worker box:** `plq loadrun` with **`PLQ_PRODUCERS=0`** (verified: a clean
+  no-op) → measures the worker pool against *externally*-supplied load. Worker
+  alone = production-match; the sampler still computes throughput/backlog/p99.
+- **Saturation protocol:** over-provision producers; any point that returns
+  `saturated=false` gets rerun with more producer firepower. The fastest target
+  (Valkey×8 zero-process, ~180k/s extrapolated) likely needs 2+ producer boxes.
+
+### One code change (note-before-code): `PLQ_RESET` gate
+`runLoadrun` unconditionally `Reset()`s the backend — which would wipe the
+queue the *external* producers are filling. Add `PLQ_RESET` (default `true`,
+back-compat). Worker boxes run with `PLQ_RESET=false`; a coordinator does one
+`plq reset` per backend before its producers start. Minimal, justified.
+
+### Infra (terraform)
+- **`valkey_count = 8`** (already a var — just set it).
+- **`aws_instance.pg_tuned`** — postgres:16 with tuned flags via command:
+  `-c synchronous_commit=off -c shared_buffers=2GB -c max_connections=400
+  -c max_wal_size=4GB`. Same 20 GiB root volume. New DSN output.
+- **Worker + producer boxes per backend** (see topology). Count depends on the
+  sequential-vs-parallel decision below.
+- Durability needs **no infra/code** — flip live via `CONFIG SET appendonly
+  yes/no` + `appendfsync everysec/always` on one Valkey instance between points.
+  *(WAITAOF would need a driver write-path change — OPEN QUESTION below.)*
+
+### Combinatorics
+Main sweep: 6 configs {PG-stock, PG-tuned, V×1, V×2, V×4, V×8} × 4 process
+{0,2,20,200ms} × 4 workers {1,10,100,1000} = **96 points**.
+Durability sub-experiment (isolated axis): V×1, process=0, workers {100,1000},
+fsync {off, everysec, always} = **6 points**.
+At ~28s/point (20s window + 8s warmup): 96 pts ≈ 45 min sequential.
+
+### OPEN DECISIONS (need Phil)
+1. **Sequential vs parallel orchestration.**
+   - *Sequential* (1 worker + 1–2 producer boxes, repoint per backend): ~10
+     boxes, simple, ~45–60 min wall-clock + babysitting.
+   - *Parallel-by-backend* (each config gets its own worker+producer+datastore
+     pool, all run at once): ~25–29 boxes, ~10–15 min wall-clock, more to
+     orchestrate/fail. Cost either way is a few $ (≪ $20).
+   - *Middle (recommend):* PG-stock + PG-tuned parallel; Valkey shard configs
+     sequential on a shared 8-box pool. ~16 boxes, ~30 min.
+2. **WAITAOF in the durability curve?** off/everysec/always is free (live CONFIG
+   SET). Adding WAITAOF (synchronous AOF ack per write) needs a gated driver
+   change. Worth it for "synchronous durability costs X," or defer?
+3. **Promote to a /draft design doc?** This is big enough to live in `designs/`
+   rather than a track note — Phil's call.
+
+### Verify (when built)
+Dry-run the isolated topology + PLQ_RESET=false locally (compose, 2 "producer"
+processes + 1 worker process, producers=0) before any apply. Then gated cloud
+apply → run-cloud-2/ → charts + $/throughput + p99 writeup.

@@ -3,8 +3,8 @@ Status: accepted
 Date: 2026-06-26
 Accepted: 2026-06-26
 Implemented: 2026-06-26 (feature/loadgen) — local half, verified vs Docker postgres:16
-Divergences: conformance + proofs moved to tests/ (tests/conformance, tests/proofs, tests/bench — the look-ahead bench got its own binary to avoid shared-DB flakes); process points labeled by per-task latency (zero/2ms/20ms/200ms), 4-point axis; added a loop-p99-vs-workers latency chart; ordering proof claims with retry (models the worker loop); look-ahead units scale with task count; chaos wired via PLQ_CHAOS env (not a --chaos flag).
-Deferred: the canonical EC2 sweep (gated — terraform apply + the run); histogram-mutex sharding + the M1 PG round-trips → measure-first on the cloud sweep.
+Divergences: conformance + proofs moved to tests/ (tests/conformance, tests/proofs, tests/bench — the look-ahead bench got its own binary to avoid shared-DB flakes); process points labeled by per-task latency (zero/2ms/20ms/200ms), 4-point axis; added a loop-p99-vs-workers latency chart; ordering proof claims with retry (models the worker loop); look-ahead units scale with task count; chaos wired via PLQ_CHAOS env (not a --chaos flag). 2026-06-27 (riff/m3-head-to-head): the canonical EC2 sweep RAN — PG plateaus ~1.7k acks/s, Valkey 26k→49k→92k over 1/2/4 shards (results/run-cloud-1/); sweep gained a `shards` series dimension (Result + CSV column + plot.py key) for the multi-shard overlay; terraform gained N Valkey primaries; results/ tracked as per-run buckets.
+Deferred: histogram-mutex sharding + the M1 PG round-trips → measure-first (still open). The ambitious follow-up run (isolated/saturated topology, 8 shards, tuned-PG, durability curve) is designs/ambitious-head-to-head.md.
 Implements: ../roadmap.md (M2)
 Builds-on: scaffold.md (the worker loop + ProcessModel), postgres-driver.md (the backend under test)
 Build-order: local half first (loadgen/proofs/metrics/graph, verified vs Docker PG); the EC2 canonical sweep is a gated step

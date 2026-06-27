@@ -118,6 +118,7 @@ sweep-postgres:
 sweep-valkey:
 	@for addrs in $(VALKEY_ADDRS_SWEEP); do \
 	  shards=$$(echo $$addrs | tr ',' '\n' | grep -c .); \
+	  : "shards here is for the log line only; the CSV's shards column is computed by shardCount() in cmd/plq/main.go — keep in sync"; \
 	  for n in $(WORKERS_SWEEP); do \
 	    echo ">>> valkey shards=$$shards workers=$$n process=zero"; \
 	    PLQ_BACKEND=valkey PLQ_VALKEY_ADDR="$$addrs" \

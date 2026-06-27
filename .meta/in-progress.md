@@ -42,21 +42,25 @@ Current work state. Update constantly, delete items when done.
     explicit `attempts` on the hash (oracle-exact, not PEL delivery_count).
   - **MERGED + pushed to `main`** 2026-06-26 (`d1795c8`, --no-ff; reviewed).
 
-- **Next milestone — M3 head-to-head (own branch, 2026-06-27).** Reuses the M2 gated
-  AWS sweep to produce the canonical PG-vs-Valkey curves (decision gate / proof #4:
-  PG plateau vs Valkey 1→4-shard scaling + loop-p99). **Two prerequisites the merged
-  code does NOT yet cover — build these first on the branch:**
-  1. **Terraform is PG-only** (`deploy/terraform`: `pg`/`worker`/`producer` boxes, no
-     Valkey). Add a Valkey box — and for the shard sweep, 1/2/4 instances — running the
-     durability config from `docker-compose.yml` (appendonly/everysec/noeviction).
-  2. **No shard-COUNT capture in the sweep.** `sweep.csv`'s `backend` column is just
-     "valkey" regardless of 1/2/4 shards, so the linearity proof can't be plotted as
-     distinct series. Add a `shards` column (Result + CSV + plot.py series key) and run
-     `sweep-valkey` at 1/2/4 addrs. `make head-to-head` overlays PG vs Valkey but is
-     shard-count-blind until then.
-  - Measure-first (not blockers): producer count to saturate Valkey (it's fast — the
-    smokes went unsaturated at PLQ_PRODUCERS=8/64); the claim-funnel ceiling + the
-    deferred PG round-trips, all on the canonical sweep.
+- **M3 head-to-head — DONE, run on cloud** (`riff/m3-head-to-head`, merged 2026-06-27).
+  Built the two prerequisites the merged M3 code didn't cover (shard-count capture as a
+  sweep series key; terraform Valkey primaries 1/2/4), dry-ran locally, then ran the
+  gated AWS head-to-head. **Canonical result (proof #4):** PG plateaus ~1.7k acks/s and
+  *declines* past 100 workers; Valkey scales near-linearly 26k→49k→92k across 1/2/4
+  shards (~53× PG at 4). Artifacts: `results/run-cloud-1/` (+ results.md). Two infra bugs
+  found+fixed live (compose PG port 5432→5433; pg root volume 8→20 GiB). `results/` now
+  tracked as per-run buckets. Cloud torn down, ≪$1.
+
+- **Next milestone — the ambitious data run (run-cloud-2, `feature/ambitious-head-to-head`).**
+  Design drafted + accepted approach: `designs/ambitious-head-to-head.md`. Upgrades the
+  head-to-head to airtight — isolated/saturated topology (worker-alone + external
+  loadgen, `PLQ_PRODUCERS=0` + a new `PLQ_RESET` gate), 1/2/4/**8** shards, a **tuned-PG**
+  baseline, a **durability tradeoff** curve (fsync off/everysec/always), the full process
+  sweep 0/2/20/200ms, and $/throughput + p99-at-knee analysis. Middle orchestration
+  (PG-stock+PG-tuned parallel; Valkey shards sequential on a shared 8-box pool), ~17
+  boxes, ~30 min, ~$3-4. **Build: the `PLQ_RESET` gate + terraform (pg_tuned, valkey_count=8,
+  generic runner pool) + orchestration scripts; dry-run the isolated topology locally
+  before the gated apply.**
 
 - **M1 Postgres driver — DONE, merged to `main`.** All 8 methods; conformance 8/8;
   per-head flush. `postgres-driver.md` accepted+reconciled. (`talking-points.md`
