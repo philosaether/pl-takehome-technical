@@ -66,7 +66,10 @@ resource "aws_instance" "pg" {
   instance_type          = var.pg_type
   key_name               = aws_key_pair.plq.key_name
   vpc_security_group_ids = [aws_security_group.plq.id]
-  user_data              = <<-EOF
+  root_block_device {
+    volume_size = 20 # the postgres:16 image (LLVM/JIT layers) overflows the ~8 GiB AMI default
+  }
+  user_data = <<-EOF
     #!/bin/bash
     dnf install -y docker
     systemctl enable --now docker
@@ -74,7 +77,7 @@ resource "aws_instance" "pg" {
       -e POSTGRES_PASSWORD=plq -e POSTGRES_USER=plq -e POSTGRES_DB=plq \
       -p 5432:5432 postgres:16
   EOF
-  tags                   = { Name = "plq-pg" }
+  tags      = { Name = "plq-pg" }
 }
 
 # Valkey primaries — N independent standalone instances (NOT Cluster; the design's

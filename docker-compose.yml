@@ -14,7 +14,8 @@ services:
       POSTGRES_USER: plq
       POSTGRES_DB: plq
     ports:
-      - "5432:5432"
+      - "5433:5432"   # host 5433 = the Makefile default DSN (dodges a stock local PG on 5432);
+                      # the containerized worker/loadgen still reach it as postgres:5432 over the network
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U plq"]
       interval: 2s

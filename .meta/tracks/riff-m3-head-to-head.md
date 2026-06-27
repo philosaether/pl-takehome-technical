@@ -140,3 +140,73 @@ user-data (operator-driven, same as the PG box today).
 **Verify (no apply — that's gated/Note 3):** `terraform -chdir=deploy/terraform
 validate` + `terraform fmt -check`, and `terraform plan` *iff* TF_VARs are set
 (otherwise eyeball the plan during the Note 3 dry-run walk-through). No `apply`.
+
+---
+
+## Note 3: full local dry run + TF VAR walk-through ✅ PLAYED (+ cloud run)
+
+**Outcome:** dry run green (smoke 4-series chart); then took it to cloud (Phil
+authorized the gated spend). Two infra bugs found + fixed live: (1) compose PG
+port 5432→5433 to match the default DSN [3a]; (2) the pg box overflowed its ~8 GiB
+root volume pulling postgres:16 → added `root_block_device { volume_size = 20 }`.
+Env snag: the Docker Desktop `credsStore: desktop` helper errored on anonymous
+pulls (worked around with a throwaway `DOCKER_CONFIG`, global config untouched);
+AWS needed the `praxis` (terraform-admin) profile — `default`/pb-dev-laptop lacks
+ec2 perms. Canonical numbers + charts: `.meta/assessments/m3-head-to-head/`.
+Headline: PG plateaus ~1.7k acks/s; Valkey scales 26k→49k→92k across 1/2/4 shards
+(~53× PG at 4 shards). Cloud torn down, ≪$1.
+
+**Why.** Prove the whole head-to-head path end-to-end on the laptop before any
+cloud spend — the gated `apply` should be the *only* surprise-free step. Surfaces
+config/wiring bugs (like the port mismatch below) for free.
+
+**3a — Fix the Postgres port mismatch (note-before-code sub-change).** The default
+`PLQ_POSTGRES_DSN` is `localhost:5433` and the Makefile comment says `make up`
+serves it there, but `docker-compose.yml` maps `5432:5432`. Fix: change the compose
+host mapping to `5433:5432`. The containerized `worker`/`loadgen` reach Postgres via
+the docker network (`postgres:5432`) so they're unaffected; only the host-side
+sweep's localhost port moves, now matching the default DSN + the comment. *(Why not
+change the default DSN to 5432 instead? The 5433 convention deliberately dodges a
+clash with any stock local Postgres on 5432 — keep it.)*
+
+**3b — Bring up the datastores (Docker must be running).**
+```
+docker compose up -d postgres        # now on localhost:5433 after 3a
+make up-valkey                       # valkey 1-4 on 6379-6382
+```
+Confirm all 5 healthy (`docker compose ps`).
+
+**3c — Smoke, then the real sweep.** Smoke first (seconds, proves wiring):
+```
+WORKERS_SWEEP="1 10" PROCESS_MS="" make head-to-head
+```
+Expect `results/sweep.csv` with a `shards` column: postgres rows (shards=1) +
+valkey rows at shards 1/2/4, and `throughput.png`/`latency.png` showing the
+overlaid series (`postgres`, `valkey`, `valkey×2`, `valkey×4`). Then the fuller
+local run (still laptop-scale — canonical numbers are cloud-only):
+```
+make head-to-head                    # default WORKERS_SWEEP/PROCESS_MS
+```
+Watch for the `not saturated` warnings (laptop producers may be the ceiling —
+that's the whole reason the graded run is on cloud boxes). Sanity-read the curves:
+Valkey above PG, higher shard counts higher.
+
+**3d — TF VAR walk-through (no apply).** The two required vars, how to source them:
+```
+export TF_VAR_ssh_public_key="$(cat ~/.ssh/id_ed25519.pub)"   # your PUBLIC key (.pub)
+export TF_VAR_ssh_cidr="$(curl -s ifconfig.me)/32"            # your current IP, /32
+```
+- `ssh_public_key`: must be the `.pub`. If `~/.ssh/id_ed25519.pub` is absent, list
+  `ls ~/.ssh/*.pub` or `ssh-keygen -t ed25519`. This becomes the EC2 key pair —
+  it's how you SSH to the boxes.
+- `ssh_cidr`: locks SSH ingress to your IP only. `ifconfig.me` gives the current
+  public IP; re-export if your network changes. `0.0.0.0/0` would open SSH to the
+  world — don't.
+- Optional dial-downs: `TF_VAR_valkey_count=1` (baseline-only, cheaper),
+  `TF_VAR_region`.
+Then **`terraform -chdir=deploy/terraform plan`** — read the plan together (counts:
+3 PG-path + 4 valkey instances, 1 key pair, 1 SG). **Stop there. No `apply`** — that
+stays gated for an explicit "make cloud-up" go.
+
+**Verify:** smoke sweep produces the 5-series chart; `terraform plan` is clean and
+shows the expected resource counts. Cloud `apply` remains gated.
