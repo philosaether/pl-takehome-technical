@@ -22,13 +22,19 @@ tf() { terraform -chdir="$TFDIR" output -raw "$1"; }
 tflist() { terraform -chdir="$TFDIR" output -json "$1" | tr -d '[]" ' | tr ',' '\n' | grep .; }
 
 echo "=== reading terraform outputs ==="
-mapfile -t WORKERS < <(tflist worker_runner_ips)     # [0]=pg-sharded [1]=pg-tuned [2]=valkey
-mapfile -t PRODUCERS < <(tflist producer_runner_ips) # [0,1]=pg-sharded [2]=pg-tuned [3,4,5]=valkey
+# NB: plain array assignment (not mapfile) — macOS ships bash 3.2, no mapfile. IPs
+# are whitespace-free so default-IFS word splitting on the newline list is safe.
+# shellcheck disable=SC2207
+WORKERS=($(tflist worker_runner_ips))     # [0]=pg-sharded [1]=pg-tuned [2]=valkey
+# shellcheck disable=SC2207
+PRODUCERS=($(tflist producer_runner_ips)) # split across the 3 tracks (see below)
 PG1=$(tf pg_addrs_1);  PG2=$(tf pg_addrs_2);  PG4=$(tf pg_addrs_4);  PG8=$(tf pg_addrs_8)
 PGT=$(tf pg_tuned_dsn)
 V1=$(tf valkey_addrs_1); V2=$(tf valkey_addrs_2); V4=$(tf valkey_addrs_4); V8=$(tf valkey_addrs_8)
-mapfile -t PG_PRIV  < <(tflist pg_private_ips)
-mapfile -t VAL_PRIV < <(tflist valkey_private_ips)
+# shellcheck disable=SC2207
+PG_PRIV=($(tflist pg_private_ips))
+# shellcheck disable=SC2207
+VAL_PRIV=($(tflist valkey_private_ips))
 PGT_PRIV=$(tf pg_tuned_private_ip)
 
 W_PGSH=${WORKERS[0]}; W_PGT=${WORKERS[1]}; W_VAL=${WORKERS[2]}
