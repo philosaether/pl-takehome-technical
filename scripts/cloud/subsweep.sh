@@ -25,13 +25,14 @@ case "$backend" in
   *) echo "unknown backend: $backend" >&2; exit 1 ;;
 esac
 shards=$(echo "$conn" | tr ',' '\n' | grep -c .)
-mkdir -p results
+: "${PLQ_RESULTS:=./results}"   # caller may override (the durability tail uses its own dir)
+mkdir -p "$PLQ_RESULTS"
 for p in $procs; do
   if [ "$p" = zero ]; then pm=(PLQ_PROCESS=zero); else pm=(PLQ_PROCESS=cost PLQ_PROCESS_BASE="$p"); fi
   for w in $workers; do
     echo ">>> $label shards=$shards workers=$w process=$p"
     env PLQ_BACKEND="$label" "$connvar=$conn" PLQ_WORKERS="$w" "${pm[@]}" \
       PLQ_PRODUCERS=0 PLQ_RESET=false PLQ_DURATION="$dur" PLQ_WARMUP="$warm" \
-      PLQ_RESULTS=./results "./plq-$backend" loadrun
+      PLQ_RESULTS="$PLQ_RESULTS" "./plq-$backend" loadrun
   done
 done

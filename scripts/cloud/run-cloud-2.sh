@@ -139,13 +139,14 @@ for mode in off everysec always; do
     always)   sets=("appendonly yes" "appendfsync always") ;;
   esac
   for s in "${sets[@]}"; do
-    $SSH "$USER@$DUR_PUB" "docker exec valkey valkey-cli CONFIG SET $s" || echo "  WARN: CONFIG SET $s failed"
+    $SSH "$USER@$DUR_PUB" "sudo docker exec valkey valkey-cli CONFIG SET $s" || echo "  WARN: CONFIG SET $s failed"
   done
   $SSH "$USER@$W_VAL" "pkill -x plq-valkey || true; env PLQ_BACKEND=valkey PLQ_VALKEY_ADDR='$DUR_ADDR' ./plq-valkey reset"
   $SSH "$USER@$DUR_PROD" "pkill -x plq-valkey || true; nohup ./producers.sh valkey '$DUR_ADDR' 256 </dev/null >producers.log 2>&1 &"
-  $SSH "$USER@$W_VAL" "sleep 10; ./subsweep.sh valkey valkey-$mode '$DUR_ADDR' '100 1000' 'zero' $DUR_ARG $WARM_ARG"
+  # durability writes to its OWN results dir (PLQ_RESULTS) so it never clobbers the
+  # valkey track's sweep.csv on this shared worker box; appends across the 3 modes.
+  $SSH "$USER@$W_VAL" "sleep 10; PLQ_RESULTS=durresults ./subsweep.sh valkey valkey-$mode '$DUR_ADDR' '100 1000' 'zero' $DUR_ARG $WARM_ARG"
   $SSH "$USER@$DUR_PROD" "pkill -x plq-valkey || true"
-  $SSH "$USER@$W_VAL" "mkdir -p durresults && mv results/sweep.csv durresults/sweep-$mode.csv 2>/dev/null || true"
 done
 
 echo "=== merge + graph ==="
@@ -156,10 +157,7 @@ merge() { # merge <ip> <remote-path>  → append rows (header once) to $1-collec
   merge "$W_PGSH" results/sweep.csv | head -1
   for ip in "$W_PGSH" "$W_VAL" "$W_PGT"; do merge "$ip" results/sweep.csv | tail -n +2; done
 } > "$OUT/sweep.csv"
-{ # durability.csv: same header, rows from each mode file
-  merge "$W_VAL" durresults/sweep-off.csv | head -1
-  for m in off everysec always; do merge "$W_VAL" "durresults/sweep-$m.csv" | tail -n +2; done
-} > "$OUT/durability.csv"
+merge "$W_VAL" durresults/sweep.csv > "$OUT/durability.csv"  # header + the 3 modes' rows
 
 python3 scripts/plot.py "$OUT"
 echo "=== done — results in $OUT/ ==="
