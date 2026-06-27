@@ -27,6 +27,9 @@ mapfile -t PRODUCERS < <(tflist producer_runner_ips) # [0,1]=pg-sharded [2]=pg-t
 PG1=$(tf pg_addrs_1);  PG2=$(tf pg_addrs_2);  PG4=$(tf pg_addrs_4);  PG8=$(tf pg_addrs_8)
 PGT=$(tf pg_tuned_dsn)
 V1=$(tf valkey_addrs_1); V2=$(tf valkey_addrs_2); V4=$(tf valkey_addrs_4); V8=$(tf valkey_addrs_8)
+mapfile -t PG_PRIV  < <(tflist pg_private_ips)
+mapfile -t VAL_PRIV < <(tflist valkey_private_ips)
+PGT_PRIV=$(tf pg_tuned_private_ip)
 
 W_PGSH=${WORKERS[0]}; W_PGT=${WORKERS[1]}; W_VAL=${WORKERS[2]}
 P_PGSH="${PRODUCERS[0]},${PRODUCERS[1]}"
@@ -42,9 +45,27 @@ ship() { # ship <ip> <backend-binary>
     "/tmp/plq-$2" scripts/cloud/subsweep.sh scripts/cloud/producers.sh "$USER@$1:" 2>/dev/null
   $SSH "$USER@$1" "chmod +x plq-$2 subsweep.sh producers.sh"
 }
+wait_ssh() { # block until SSH answers on each box (fresh instances boot ~30s)
+  for ip in "$@"; do
+    for i in $(seq 1 40); do $SSH "$USER@$ip" true 2>/dev/null && break; sleep 5; done
+  done
+}
+wait_ports() { # wait_ports <worker_ip> <host:port...> — all open, polled from the worker box
+  local wip=$1; shift
+  $SSH "$USER@$wip" "for i in \$(seq 1 72); do ok=1; for hp in $*; do h=\${hp%:*}; p=\${hp#*:}; (exec 3<>/dev/tcp/\$h/\$p) 2>/dev/null || ok=0; done; [ \$ok = 1 ] && exit 0; sleep 5; done; exit 1"
+}
+
+echo "=== waiting for runner SSH ==="
+wait_ssh "${WORKERS[@]}" "${PRODUCERS[@]}"
+
 echo "=== distributing binaries + scripts ==="
 for ip in "$W_PGSH" "$W_PGT" "${PRODUCERS[0]}" "${PRODUCERS[1]}" "${PRODUCERS[2]}"; do ship "$ip" postgres; done
 for ip in "$W_VAL" "${PRODUCERS[3]}" "${PRODUCERS[4]}" "${PRODUCERS[5]}"; do ship "$ip" valkey; done
+
+echo "=== waiting for datastores (up to ~6min; postgres:16 pulls on fresh boxes) ==="
+wait_ports "$W_PGSH" "$(printf '%s:5432 ' "${PG_PRIV[@]}")"  && echo "  PG pool ready"
+wait_ports "$W_VAL"  "$(printf '%s:6379 ' "${VAL_PRIV[@]}")" && echo "  valkey pool ready"
+wait_ports "$W_PGT"  "$PGT_PRIV:5432"                        && echo "  tuned PG ready"
 
 connvar() { [ "$1" = postgres ] && echo PLQ_POSTGRES_DSN || echo PLQ_VALKEY_ADDR; }
 
