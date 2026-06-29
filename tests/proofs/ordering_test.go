@@ -23,11 +23,13 @@ func TestOrderingUnderCrash(t *testing.T) {
 				t.Fatalf("enqueue: %v", err)
 			}
 		}
+		t.Logf("enqueued t0..t%d into one unit %s (FIFO, single ordered stream)", n-1, key)
 
 		var log []int64
 
 		// Worker A: short lease, processes & acks t0..t2, then crashes.
 		ca := claimRetry(t, be, "A", time.Second)
+		t.Logf("Worker A claimed the unit (exclusive, 1s lease)")
 		batch, err := be.Drain(ctx, ca, n)
 		if err != nil {
 			t.Fatalf("A drain: %v", err)
@@ -38,6 +40,7 @@ func TestOrderingUnderCrash(t *testing.T) {
 		if _, err := be.Ack(ctx, ca, 2); err != nil { // ack through t2
 			t.Fatalf("A ack: %v", err)
 		}
+		t.Logf("Worker A processed & acked t0..t2 (3 of 10), then 💥 CRASHED holding t3..t9 (lease abandoned, never released)")
 		// CRASH: A stops heartbeating and abandons t3..t9 (no further calls).
 
 		// Reaper reclaims A's expired lease.
@@ -48,9 +51,11 @@ func TestOrderingUnderCrash(t *testing.T) {
 		if reclaimed != 1 {
 			t.Fatalf("reclaimed=%d, want 1 (the crashed worker's lease)", reclaimed)
 		}
+		t.Logf("lease expired → reaper reclaimed %d lease (A's); t3..t9 still pending and still ordered", reclaimed)
 
 		// Worker B drains the rest, in order, starting at t3.
 		cb := claimRetry(t, be, "B", time.Minute)
+		t.Logf("Worker B claimed the reclaimed unit — redelivery resumes at t3 (not t0)")
 		for {
 			batch, err := be.Drain(ctx, cb, n)
 			if err != nil {
@@ -80,5 +85,6 @@ func TestOrderingUnderCrash(t *testing.T) {
 				t.Fatalf("out of order at %d: seq=%d (full: %v)", i, s, log)
 			}
 		}
+		t.Logf("✓ PROVEN: processing log = %v — each task exactly once, in arrival order across the crash (t0..t2 never re-ran; t3 redelivered, never skipped)", log)
 	})
 }

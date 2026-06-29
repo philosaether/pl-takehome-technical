@@ -58,6 +58,7 @@ func happyPath(t *testing.T, newBackend Factory) {
 	be := newBackend(Config{Threshold: 100, MaxWait: time.Hour, MaxAttempts: 3})
 	defer be.Close()
 	enqueueN(t, be, 5, 30) // 150 >= 100 → eligible
+	t.Logf("PROVE gate→claim→drain→ack: enqueued 5×30 = 150 cost ≥ T(100) → unit eligible")
 
 	c, err := be.Claim(ctx, "w", time.Minute)
 	ok(t, err, "claim")
@@ -82,12 +83,14 @@ func happyPath(t *testing.T, newBackend Factory) {
 	if c2, _ := be.Claim(ctx, "w", time.Minute); c2 != nil {
 		t.Fatalf("claimed a drained unit: %+v", c2)
 	}
+	t.Logf("  ✓ claimed exclusively, drained %v in seq order, acked through 4 → unit released & gone", seqs(tasks))
 }
 
 func gateBelowThreshold(t *testing.T, newBackend Factory) {
 	be := newBackend(Config{Threshold: 100, MaxWait: time.Hour, MaxAttempts: 3})
 	defer be.Close()
 	enqueueN(t, be, 1, 40) // 40 < 100
+	t.Logf("PROVE the gate: enqueued 40 < T(100) → unit must NOT be claimable except via flush")
 
 	if c, _ := be.Claim(ctx, "w", time.Minute); c != nil {
 		t.Fatalf("claimed a sub-threshold unit: %+v", c)
@@ -100,6 +103,7 @@ func gateBelowThreshold(t *testing.T, newBackend Factory) {
 	if c, _ := be.Claim(ctx, "w", time.Minute); c == nil {
 		t.Fatal("unit not claimable after flush")
 	}
+	t.Logf("  ✓ below T → not claimable; flush (age-cap) promoted %d unit → claimable (the only sub-T path)", flushed)
 }
 
 func inOrderAcrossBatches(t *testing.T, newBackend Factory) {
@@ -107,6 +111,7 @@ func inOrderAcrossBatches(t *testing.T, newBackend Factory) {
 	defer be.Close()
 	const n = 10
 	enqueueN(t, be, n, 1) // threshold 1 → stays eligible through the drain
+	t.Logf("PROVE order across batches: %d tasks, drained 3 at a time over multiple drain/ack cycles", n)
 
 	c, err := be.Claim(ctx, "w", time.Minute)
 	ok(t, err, "claim")
@@ -138,12 +143,14 @@ func inOrderAcrossBatches(t *testing.T, newBackend Factory) {
 			t.Fatalf("out of order at %d: seq=%d (full: %v)", i, s, got)
 		}
 	}
+	t.Logf("  ✓ processed %v — strict arrival order held across every batch, no double-processing", got)
 }
 
 func keepThenRebuffer(t *testing.T, newBackend Factory) {
 	be := newBackend(Config{Threshold: 100, MaxWait: time.Hour, MaxAttempts: 3})
 	defer be.Close()
 	enqueueN(t, be, 5, 30) // 150 >= 100
+	t.Logf("PROVE keep/rebuffer: 150 ≥ T(100); draining 3 (cost 90) leaves 60 < T")
 
 	c, err := be.Claim(ctx, "w", time.Minute)
 	ok(t, err, "claim")
@@ -161,6 +168,7 @@ func keepThenRebuffer(t *testing.T, newBackend Factory) {
 	if c3, _ := be.Claim(ctx, "w", time.Minute); c3 == nil {
 		t.Fatal("unit should be claimable after crossing T again")
 	}
+	t.Logf("  ✓ remainder 60 < T → unit re-buffered (released, not claimable); +60 → 120 ≥ T → claimable again")
 }
 
 // flushIsPerHead pins the resolved semantics: flushing the aged head drains only
@@ -170,6 +178,7 @@ func flushIsPerHead(t *testing.T, newBackend Factory) {
 	be := newBackend(Config{Threshold: 1000, MaxWait: 10 * time.Second, MaxAttempts: 3})
 	defer be.Close()
 	enqueueN(t, be, 2, 1) // both far below T(1000); same unit, head=seq0
+	t.Logf("PROVE per-head flush: 2 tasks far below T(1000); aging only the head past its 10s deadline")
 
 	// force the head past its flush deadline
 	_, flushed, err := be.ReapExpired(ctx, time.Now().Add(11*time.Second))
@@ -195,12 +204,14 @@ func flushIsPerHead(t *testing.T, newBackend Factory) {
 	if c2, _ := be.Claim(ctx, "w", time.Minute); c2 != nil {
 		t.Fatal("per-head: tail must not be claimable until it ages or crosses T")
 	}
+	t.Logf("  ✓ aged head (seq 0) drained; newer tail re-buffers — NOT sticky (a whole-unit flush would over-drain and fail here)")
 }
 
 func leaseReclaimRedelivers(t *testing.T, newBackend Factory) {
 	be := newBackend(Config{Threshold: 1, MaxWait: time.Hour, MaxAttempts: 3})
 	defer be.Close()
 	enqueueN(t, be, 3, 1) // seq 0,1,2
+	t.Logf("PROVE crash redelivery: 3 tasks; worker acks seq 0, then crashes holding 1,2")
 
 	c, err := be.Claim(ctx, "w", time.Second)
 	ok(t, err, "claim")
@@ -225,12 +236,14 @@ func leaseReclaimRedelivers(t *testing.T, newBackend Factory) {
 	if len(tasks2) != 2 || tasks2[0].Seq != 1 { // 0 acked → gone; redeliver from 1, in order
 		t.Fatalf("expected redelivery from seq 1, got %v", seqs(tasks2))
 	}
+	t.Logf("  ✓ reaper reclaimed the lease; new worker redelivered from seq 1 in order (seq 0 acked → never resent)")
 }
 
 func poisonToDLQ(t *testing.T, newBackend Factory) {
 	be := newBackend(Config{Threshold: 1, MaxWait: time.Hour, MaxAttempts: 2})
 	defer be.Close()
 	enqueueN(t, be, 2, 1) // seq 0,1; seq 0 is poison
+	t.Logf("PROVE poison handling: seq 0 is poison (MaxAttempts=2); failing it until it DLQs")
 
 	for attempt := 1; attempt <= 2; attempt++ {
 		c, err := be.Claim(ctx, "w", time.Minute)
@@ -256,6 +269,7 @@ func poisonToDLQ(t *testing.T, newBackend Factory) {
 	if len(tasks) != 1 || tasks[0].Seq != 1 {
 		t.Fatalf("expected only seq 1 to remain, got %v", seqs(tasks))
 	}
+	t.Logf("  ✓ poison head hit max attempts → DLQ'd; unit unblocked with head=seq 1 (poison can't wedge the FIFO)")
 }
 
 // failNonHeadDoesNotDLQ: only the head may be DLQ'd at the cap. Failing a
@@ -265,6 +279,7 @@ func failNonHeadDoesNotDLQ(t *testing.T, newBackend Factory) {
 	be := newBackend(Config{Threshold: 1, MaxWait: time.Hour, MaxAttempts: 2})
 	defer be.Close()
 	enqueueN(t, be, 2, 1) // seq 0 (head), 1 (non-head)
+	t.Logf("PROVE FIFO integrity: failing NON-head seq 1 past MaxAttempts must NOT DLQ (no holes in the FIFO)")
 
 	for attempt := 1; attempt <= 3; attempt++ { // past MaxAttempts=2
 		c, err := be.Claim(ctx, "w", time.Minute)
@@ -281,6 +296,7 @@ func failNonHeadDoesNotDLQ(t *testing.T, newBackend Factory) {
 	if len(tasks) != 2 || tasks[0].Seq != 0 || tasks[1].Seq != 1 {
 		t.Fatalf("non-head fail must not DLQ; expected [0 1], got %v", seqs(tasks))
 	}
+	t.Logf("  ✓ non-head survived repeated failures; unit still [0 1] intact (only the head may DLQ)")
 }
 
 func seqs(tasks []queue.Task) []int64 {
